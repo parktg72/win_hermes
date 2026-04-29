@@ -1158,6 +1158,9 @@ def _launch_tui(
 
 def cmd_chat(args):
     """Run interactive chat CLI."""
+    if getattr(args, "dir", None):
+        _inject_dir_context(Path(args.dir))
+
     use_tui = getattr(args, "tui", False) or os.environ.get("HERMES_TUI") == "1"
 
     # Resolve --continue into --resume with the latest session or by name
@@ -7748,8 +7751,90 @@ def cmd_logs(args):
     )
 
 
+_AGENTS_MD_TEMPLATE = """\
+# Project Context
+Language: SAS / R / Python
+Domain: Academic medical research (NHIS cohort / NMA)
+Correctness priority: numbers before interpretation before caveat
+ICD codes and variable names: never invent — ask if uncertain
+Output directory: /out/<date>/
+"""
+
+
+def _cmd_init() -> None:
+    """Create AGENTS.md in the current directory."""
+    target = Path.cwd() / "AGENTS.md"
+    if target.exists():
+        print(f"AGENTS.md already exists at {target}. Skipping.")
+        return
+    target.write_text(_AGENTS_MD_TEMPLATE, encoding="utf-8")
+    print(f"Created {target}")
+    print("Run `hermes` in this directory to start a project-aware session.")
+
+
+def _inject_dir_context(project_dir: Path) -> None:
+    """Scan project_dir and inject file contents into AGENTS.md for the session.
+
+    Creates a temporary section at the bottom of AGENTS.md (or creates it).
+    Registers an atexit handler to remove the injected section on exit.
+    """
+    import atexit
+    import json
+    import os as _os
+    from hermes_cli.scan import scan_directory, build_context_block
+
+    project_dir = project_dir.resolve()
+    if not project_dir.is_dir():
+        import sys as _sys
+        print(f"Warning: {project_dir} is not a directory. Ignoring.", file=_sys.stderr)
+        return
+
+    agents_md = project_dir / "AGENTS.md"
+    marker_start = "<!-- hermes-scan-start -->\n"
+    marker_end = "<!-- hermes-scan-end -->\n"
+
+    files = scan_directory(project_dir)
+    if not files:
+        print(f"No source files found in {project_dir}.")
+        return
+
+    context_block = build_context_block(files, base_dir=project_dir)
+    injected_section = f"\n{marker_start}{context_block}\n{marker_end}"
+
+    original_content: str | None = None
+    if agents_md.exists():
+        original_content = agents_md.read_text(encoding="utf-8")
+        if marker_start in original_content:
+            pass  # already injected (crash recovery)
+        else:
+            agents_md.write_text(original_content + injected_section, encoding="utf-8")
+    else:
+        agents_md.write_text(injected_section, encoding="utf-8")
+
+    _os.chdir(project_dir)
+    print(f"Loaded {len(files)} file(s) from {project_dir} as context.")
+
+    def _cleanup():
+        if agents_md.exists():
+            text = agents_md.read_text(encoding="utf-8")
+            start_idx = text.find(marker_start)
+            if start_idx != -1:
+                cleaned = text[:start_idx]
+                if cleaned.strip():
+                    agents_md.write_text(cleaned, encoding="utf-8")
+                else:
+                    agents_md.unlink()
+
+    atexit.register(_cleanup)
+
+
 def main():
     """Main entry point for hermes CLI."""
+    # Windows compatibility — must run before any asyncio or terminal setup
+    if __import__("sys").platform == "win32":
+        from hermes_cli.platform.windows import apply_windows_patches
+        apply_windows_patches()
+
     parser = argparse.ArgumentParser(
         prog="hermes",
         description="Hermes Agent - AI assistant with tool-calling capabilities",
@@ -8046,7 +8131,21 @@ For more help on a command:
         default=False,
         help="With --tui: run TypeScript sources via tsx (skip dist build)",
     )
+    chat_parser.add_argument(
+        "dir",
+        nargs="?",
+        default=None,
+        metavar="DIR",
+        help="Load all source files from DIR as project context before chatting",
+    )
     chat_parser.set_defaults(func=cmd_chat)
+
+    # hermes init — create AGENTS.md in current directory
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Create AGENTS.md project context in current directory",
+    )
+    init_parser.set_defaults(subcommand="init")
 
     # =========================================================================
     # model command
@@ -10306,6 +10405,10 @@ Examples:
         return
 
     # Execute the command
+    elif getattr(args, "subcommand", None) == "init":
+        _cmd_init()
+        return
+
     if hasattr(args, "func"):
         args.func(args)
     else:
