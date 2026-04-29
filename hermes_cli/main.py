@@ -1156,7 +1156,7 @@ def _launch_tui(
     sys.exit(code)
 
 
-def _maybe_setup_ollama_model(args) -> None:
+def _maybe_setup_ollama_model() -> None:
     """Detect Ollama on localhost and set HERMES_MODEL env var if not already set.
 
     Only activates when the active provider is not already configured
@@ -1164,15 +1164,12 @@ def _maybe_setup_ollama_model(args) -> None:
     Silently skips if Ollama is not running.
     """
     import asyncio
-    import json
-    import os as _os
-    from pathlib import Path as _Path
 
-    # Skip if a model is already explicitly configured via env or args
-    if _os.environ.get("HERMES_MODEL") or _os.environ.get("ANTHROPIC_API_KEY"):
+    # Skip if a model is already explicitly configured via env
+    if os.environ.get("HERMES_MODEL"):
         return
 
-    config_path = _Path.home() / ".hermes" / "config.json"
+    config_path = Path.home() / ".hermes" / "config.json"
     saved_model: str | None = None
     if config_path.exists():
         try:
@@ -1181,12 +1178,12 @@ def _maybe_setup_ollama_model(args) -> None:
         except (json.JSONDecodeError, OSError):
             pass
 
+    from hermes_cli.providers.ollama_discovery import (
+        fetch_ollama_models,
+        select_model,
+        OllamaNotRunningError,
+    )
     try:
-        from hermes_cli.providers.ollama_discovery import (
-            fetch_ollama_models,
-            select_model,
-            OllamaNotRunningError,
-        )
         models = asyncio.run(fetch_ollama_models())
         chosen = select_model(models, saved=saved_model)
 
@@ -1202,10 +1199,10 @@ def _maybe_setup_ollama_model(args) -> None:
         config_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
         # Set the model for this session
-        _os.environ.setdefault("HERMES_MODEL", f"ollama/{chosen}")
+        os.environ.setdefault("HERMES_MODEL", f"ollama/{chosen}")
         print(f"Using Ollama model: {chosen}")
 
-    except Exception:
+    except (OllamaNotRunningError, ValueError, OSError):
         # Ollama not running or not configured — silently skip
         pass
 
@@ -1213,7 +1210,7 @@ def _maybe_setup_ollama_model(args) -> None:
 def cmd_chat(args):
     """Run interactive chat CLI."""
     # Ollama auto-discovery (Windows-native deployment uses Ollama)
-    _maybe_setup_ollama_model(args)
+    _maybe_setup_ollama_model()
 
     if getattr(args, "dir", None):
         _inject_dir_context(Path(args.dir))
@@ -7836,13 +7833,11 @@ def _inject_dir_context(project_dir: Path) -> None:
     Registers an atexit handler to remove the injected section on exit.
     """
     import atexit
-    import os as _os
     from hermes_cli.scan import scan_directory, build_context_block
 
     project_dir = project_dir.resolve()
     if not project_dir.is_dir():
-        import sys as _sys
-        print(f"Warning: {project_dir} is not a directory. Ignoring.", file=_sys.stderr)
+        print(f"Warning: {project_dir} is not a directory. Ignoring.", file=sys.stderr)
         return
 
     agents_md = project_dir / "AGENTS.md"
@@ -7861,13 +7856,20 @@ def _inject_dir_context(project_dir: Path) -> None:
     if agents_md.exists():
         original_content = agents_md.read_text(encoding="utf-8")
         if marker_start in original_content:
-            pass  # already injected (crash recovery)
-        else:
-            agents_md.write_text(original_content + injected_section, encoding="utf-8")
+            # Stale block from a previous crash — strip it before re-injecting
+            start_idx = original_content.find(marker_start)
+            end_idx = original_content.find(marker_end)
+            if end_idx != -1:
+                end_pos = end_idx + len(marker_end)
+                original_content = original_content[:start_idx] + original_content[end_pos:]
+            else:
+                original_content = original_content[:start_idx]
+        agents_md.write_text(original_content + injected_section, encoding="utf-8")
     else:
         agents_md.write_text(injected_section, encoding="utf-8")
 
-    _os.chdir(project_dir)
+    # chdir so hermes-agent picks up AGENTS.md from the project directory as its working context
+    os.chdir(project_dir)
     print(f"Loaded {len(files)} file(s) from {project_dir} as context.")
 
     def _cleanup():
@@ -8207,7 +8209,7 @@ For more help on a command:
         "init",
         help="Create AGENTS.md project context in current directory",
     )
-    init_parser.set_defaults(subcommand="init")
+    init_parser.set_defaults(func=lambda a: _cmd_init())
 
     # =========================================================================
     # model command
@@ -10467,10 +10469,6 @@ Examples:
         return
 
     # Execute the command
-    elif getattr(args, "subcommand", None) == "init":
-        _cmd_init()
-        return
-
     if hasattr(args, "func"):
         args.func(args)
     else:
