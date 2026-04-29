@@ -10,7 +10,13 @@ where uv >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     if exist "%~dp0vendor\uv.exe" (
         echo uv를 설치합니다...
-        copy "%~dp0vendor\uv.exe" "%LOCALAPPDATA%\uv\bin\uv.exe" >nul 2>&1
+        mkdir "%LOCALAPPDATA%\uv\bin" 2>nul
+        copy "%~dp0vendor\uv.exe" "%LOCALAPPDATA%\uv\bin\uv.exe" >nul
+        if %ERRORLEVEL% neq 0 (
+            echo [오류] uv.exe 복사 실패. 권한을 확인하세요.
+            pause
+            exit /b 1
+        )
         set "PATH=%LOCALAPPDATA%\uv\bin;%PATH%"
     ) else (
         echo [오류] uv.exe를 찾을 수 없습니다.
@@ -23,8 +29,23 @@ echo [1/5] uv 확인 완료
 
 :: Step 2: Create venv with Python 3.12
 echo [2/5] Python 3.12 가상환경 생성 중...
-uv python install 3.12 --quiet
-uv venv "%~dp0venv" --python 3.12 --quiet
+set "PY312="
+py -3.12 --version >nul 2>&1
+if %ERRORLEVEL% equ 0 set "PY312=1"
+
+if defined PY312 (
+    uv venv "%~dp0venv" --python "3.12" --quiet --allow-existing
+) else (
+    echo Python 3.12를 다운로드합니다 (인터넷 연결 필요)...
+    uv python install 3.12 --quiet
+    if %ERRORLEVEL% neq 0 (
+        echo [오류] Python 3.12 다운로드 실패.
+        echo        Python 3.12를 먼저 설치하거나 인터넷 연결을 확인하세요.
+        pause
+        exit /b 1
+    )
+    uv venv "%~dp0venv" --python "3.12" --quiet --allow-existing
+)
 if %ERRORLEVEL% neq 0 (
     echo [오류] 가상환경 생성 실패
     pause
@@ -34,12 +55,13 @@ if %ERRORLEVEL% neq 0 (
 :: Step 3: Install packages from vendor/wheels (offline)
 echo [3/5] 패키지 설치 중 (오프라인)...
 if exist "%~dp0vendor\wheels" (
-    "%~dp0venv\Scripts\python.exe" -m pip install --quiet ^
-        --no-index --find-links "%~dp0vendor\wheels" ^
+    uv pip install --python "%~dp0venv\Scripts\python.exe" ^
+        --quiet --no-index --find-links "%~dp0vendor\wheels" ^
         -e "%~dp0.[windows]"
 ) else (
     echo [경고] vendor\wheels 폴더 없음. 온라인 설치 시도...
-    "%~dp0venv\Scripts\python.exe" -m pip install --quiet -e "%~dp0.[windows]"
+    uv pip install --python "%~dp0venv\Scripts\python.exe" ^
+        --quiet -e "%~dp0.[windows]"
 )
 if %ERRORLEVEL% neq 0 (
     echo [오류] 패키지 설치 실패
@@ -51,13 +73,14 @@ if %ERRORLEVEL% neq 0 (
 echo [4/5] Ollama 연결 확인 중...
 curl -s --max-time 2 http://localhost:11434/api/tags >nul 2>&1
 if %ERRORLEVEL% neq 0 (
+    echo [4/5] Ollama 연결 실패 (경고):
     echo [경고] Ollama가 실행되지 않았습니다.
     echo        설치 후 ollama serve 를 실행하고 hermes.bat를 시작하세요.
 ) else (
     echo [4/5] Ollama 연결 확인 완료
 )
 
-:: Step 5: Confirm hermes.bat exists
+:: Step 5: Print usage and finish
 echo [5/5] 설치 완료
 echo.
 echo 사용법:
