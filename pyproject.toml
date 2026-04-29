@@ -7,7 +7,7 @@ name = "hermes-agent"
 version = "0.11.0"
 description = "The self-improving AI agent — creates skills from experience, improves them during use, and runs anywhere"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [{ name = "Nous Research" }]
 license = { text = "MIT" }
 dependencies = [
@@ -76,6 +76,7 @@ termux = [
   "hermes-agent[honcho]",
   "hermes-agent[acp]",
 ]
+windows = ["winpty>=0.4.3", "colorama>=0.4.6"]
 dingtalk = ["dingtalk-stream>=0.20,<1", "alibabacloud-dingtalk>=2.0.0", "qrcode>=7.0,<8"]
 feishu = ["lark-oapi>=1.5.3,<2", "qrcode>=7.0,<8"]
 google = [
@@ -145,6 +146,7 @@ markers = [
     "integration: marks tests requiring external services (API keys, Modal, etc.)",
 ]
 addopts = "-m 'not integration' -n auto"
+asyncio_mode = "auto"
 
 [tool.ty.environment]
 python-version = "3.13"
