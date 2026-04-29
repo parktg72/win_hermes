@@ -13,7 +13,7 @@ from hermes_cli.providers.ollama_discovery import (
 async def test_fetch_ollama_models_returns_list():
     fake_response = {"models": [{"name": "llama3.2:latest"}, {"name": "mistral:7b"}]}
     mock_resp = AsyncMock()
-    mock_resp.json = AsyncMock(return_value=fake_response)
+    mock_resp.json = MagicMock(return_value=fake_response)
     mock_resp.raise_for_status = MagicMock()
 
     with patch("hermes_cli.providers.ollama_discovery.httpx.AsyncClient") as mock_client:

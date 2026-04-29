@@ -30,7 +30,7 @@ async def fetch_ollama_models() -> list[str]:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             resp = await client.get(f"{OLLAMA_BASE}/api/tags")
             resp.raise_for_status()
-            data = await resp.json()
+            data = resp.json()
             return [m["name"] for m in data.get("models", [])]
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
         raise OllamaNotRunningError(
