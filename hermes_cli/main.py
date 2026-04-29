@@ -1156,8 +1156,65 @@ def _launch_tui(
     sys.exit(code)
 
 
+def _maybe_setup_ollama_model(args) -> None:
+    """Detect Ollama on localhost and set HERMES_MODEL env var if not already set.
+
+    Only activates when the active provider is not already configured
+    or when the user explicitly runs in Ollama mode.
+    Silently skips if Ollama is not running.
+    """
+    import asyncio
+    import json
+    import os as _os
+    from pathlib import Path as _Path
+
+    # Skip if a model is already explicitly configured via env or args
+    if _os.environ.get("HERMES_MODEL") or _os.environ.get("ANTHROPIC_API_KEY"):
+        return
+
+    config_path = _Path.home() / ".hermes" / "config.json"
+    saved_model: str | None = None
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            saved_model = data.get("ollama_model")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    try:
+        from hermes_cli.providers.ollama_discovery import (
+            fetch_ollama_models,
+            select_model,
+            OllamaNotRunningError,
+        )
+        models = asyncio.run(fetch_ollama_models())
+        chosen = select_model(models, saved=saved_model)
+
+        # Persist the choice
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = {}
+        if config_path.exists():
+            try:
+                existing = json.loads(config_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        existing["ollama_model"] = chosen
+        config_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+        # Set the model for this session
+        _os.environ.setdefault("HERMES_MODEL", f"ollama/{chosen}")
+        print(f"Using Ollama model: {chosen}")
+
+    except Exception:
+        # Ollama not running or not configured — silently skip
+        pass
+
+
 def cmd_chat(args):
     """Run interactive chat CLI."""
+    # Ollama auto-discovery (Windows-native deployment uses Ollama)
+    _maybe_setup_ollama_model(args)
+
     if getattr(args, "dir", None):
         _inject_dir_context(Path(args.dir))
 
@@ -7779,7 +7836,6 @@ def _inject_dir_context(project_dir: Path) -> None:
     Registers an atexit handler to remove the injected section on exit.
     """
     import atexit
-    import json
     import os as _os
     from hermes_cli.scan import scan_directory, build_context_block
 
@@ -7818,12 +7874,18 @@ def _inject_dir_context(project_dir: Path) -> None:
         if agents_md.exists():
             text = agents_md.read_text(encoding="utf-8")
             start_idx = text.find(marker_start)
-            if start_idx != -1:
-                cleaned = text[:start_idx]
-                if cleaned.strip():
-                    agents_md.write_text(cleaned, encoding="utf-8")
-                else:
-                    agents_md.unlink()
+            end_idx = text.find(marker_end)
+            if start_idx != -1 and end_idx != -1:
+                end_pos = end_idx + len(marker_end)
+                cleaned = text[:start_idx] + text[end_pos:]
+            elif start_idx != -1:
+                cleaned = text[:start_idx]  # marker_end missing (corrupt fallback)
+            else:
+                return
+            if cleaned.strip():
+                agents_md.write_text(cleaned, encoding="utf-8")
+            else:
+                agents_md.unlink()
 
     atexit.register(_cleanup)
 
@@ -7831,7 +7893,7 @@ def _inject_dir_context(project_dir: Path) -> None:
 def main():
     """Main entry point for hermes CLI."""
     # Windows compatibility — must run before any asyncio or terminal setup
-    if __import__("sys").platform == "win32":
+    if sys.platform == "win32":
         from hermes_cli.platform.windows import apply_windows_patches
         apply_windows_patches()
 
