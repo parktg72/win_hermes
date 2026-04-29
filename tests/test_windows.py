@@ -1,5 +1,3 @@
-import sys
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 def test_apply_windows_patches_is_importable():
@@ -17,7 +15,8 @@ def test_normalize_path_accepts_forward_slashes():
     assert result == "C:/Users/test/project"
 
 def test_apply_windows_patches_calls_colorama_init():
-    with patch("hermes_cli.platform.windows.colorama") as mock_colorama:
+    with patch("hermes_cli.platform.windows.colorama") as mock_colorama, \
+         patch("hermes_cli.platform.windows.asyncio"):
         from hermes_cli.platform.windows import apply_windows_patches
         apply_windows_patches()
         mock_colorama.init.assert_called_once_with(wrap=True)
@@ -29,3 +28,10 @@ def test_apply_windows_patches_sets_proactor_policy():
         from hermes_cli.platform.windows import apply_windows_patches
         apply_windows_patches()
         mock_asyncio.set_event_loop_policy.assert_called_once_with(mock_policy)
+
+def test_apply_windows_patches_skips_colorama_when_unavailable():
+    """Graceful degradation when colorama is not installed."""
+    with patch("hermes_cli.platform.windows.colorama", None), \
+         patch("hermes_cli.platform.windows.asyncio"):
+        from hermes_cli.platform.windows import apply_windows_patches
+        apply_windows_patches()  # must not raise AttributeError
