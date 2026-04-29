@@ -1,4 +1,3 @@
-import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -34,6 +33,26 @@ async def test_fetch_ollama_models_raises_when_not_running():
         mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
         with pytest.raises(OllamaNotRunningError):
             await fetch_ollama_models()
+
+
+@pytest.mark.asyncio
+async def test_fetch_ollama_models_raises_on_read_error():
+    import httpx
+    with patch("hermes_cli.providers.ollama_discovery.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__ = AsyncMock(side_effect=httpx.ReadError("connection reset"))
+        mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+        with pytest.raises(OllamaNotRunningError):
+            await fetch_ollama_models()
+
+
+def test_select_model_saved_empty_string_falls_through():
+    result = select_model(["mistral:7b"], saved="", auto_pick_first=True)
+    assert result == "mistral:7b"
+
+
+def test_select_model_saved_none_picks_first():
+    result = select_model(["mistral:7b", "llama3.2:latest"], saved=None, auto_pick_first=True)
+    assert result == "mistral:7b"
 
 
 def test_select_model_returns_saved_when_valid():

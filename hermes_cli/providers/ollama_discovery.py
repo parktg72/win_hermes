@@ -32,7 +32,7 @@ async def fetch_ollama_models() -> list[str]:
             resp.raise_for_status()
             data = resp.json()
             return [m["name"] for m in data.get("models", [])]
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
+    except httpx.TransportError as exc:
         raise OllamaNotRunningError(
             "Ollama가 실행되지 않았습니다. `ollama serve` 실행 후 재시작하세요."
         ) from exc
