@@ -142,7 +142,10 @@ Find or add after the existing `[project.optional-dependencies]` block:
 ```toml
 [project.optional-dependencies]
 # ... existing entries ...
-windows = ["winpty>=0.4.3", "colorama>=0.4.6"]
+windows = [
+  "pywinpty>=2.0.0,<3; sys_platform == 'win32'",
+  "colorama>=0.4.6; sys_platform == 'win32'",
+]
 ```
 
 Also update `[tool.pytest.ini_options]` to add `asyncio_mode = "auto"` if not present.
