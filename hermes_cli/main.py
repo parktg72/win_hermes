@@ -1204,7 +1204,14 @@ def _maybe_setup_ollama_model() -> None:
     except OllamaNotRunningError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
-    except (ValueError, OSError):
+    except ValueError:
+        print(
+            "Ollama에 설치된 모델이 없습니다. "
+            "`ollama pull <model>` 로 모델을 먼저 받아주세요.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except OSError:
         pass
 
 
@@ -10476,5 +10483,47 @@ Examples:
         parser.print_help()
 
 
+def _log_unexpected_error(exc: BaseException, log_dir: Optional[Path] = None) -> None:
+    """Print Korean error to stderr and append traceback to ~/.hermes/error.log."""
+    import traceback
+    from datetime import datetime
+
+    if log_dir is None:
+        log_dir = Path.home() / ".hermes"
+    log_path: Optional[Path] = log_dir / "error.log"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"\n--- {datetime.now().isoformat()} ---\n")
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=f)
+    except OSError:
+        log_path = None
+
+    print(
+        f"\n[오류] 예상하지 못한 문제가 발생했습니다: {type(exc).__name__}: {exc}",
+        file=sys.stderr,
+    )
+    if log_path is not None:
+        print(f"자세한 내용은 {log_path} 를 확인하세요.", file=sys.stderr)
+    print(
+        "문제가 반복되면 이슈로 신고해 주세요: "
+        "https://github.com/parktg72/win_hermes/issues",
+        file=sys.stderr,
+    )
+
+
+def _run_main() -> None:
+    """Top-level entry guard — keeps tracebacks away from non-developer users."""
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        _log_unexpected_error(exc)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    main()
+    _run_main()

@@ -1,3 +1,10 @@
+<!-- win_hermes fork notice — keep at the top so end users see it before the upstream English content -->
+> **이 저장소는 [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)의 Windows 폐쇄 사내망용 포크입니다.**
+>
+> - Windows 사용자: `install.bat`을 더블클릭하세요. 한국어 안내는 [`README-KO.md`](./README-KO.md) 참조.
+> - 사내망 / PyPI 차단 환경: `python scripts/download_wheels.py`로 휠을 미리 받아 `vendor/wheels/`에 두면 오프라인 설치됩니다.
+> - 이하 본문은 upstream(Linux/macOS/WSL2) 문서이며 win_hermes에는 일부만 적용됩니다.
+
 <p align="center">
   <img src="assets/banner.png" alt="Hermes Agent" width="100%">
 </p>
@@ -37,7 +44,7 @@ Works on Linux, macOS, WSL2, and Android via Termux. The installer handles the p
 
 > **Android / Termux:** The tested manual path is documented in the [Termux guide](https://hermes-agent.nousresearch.com/docs/getting-started/termux). On Termux, Hermes installs a curated `.[termux]` extra because the full `.[all]` extra currently pulls Android-incompatible voice dependencies.
 >
-> **Windows:** Native Windows is not supported. Please install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run the command above.
+> **Windows:** Upstream supports WSL2 only. **win_hermes fork** ships native Windows support via `install.bat` — see [`README-KO.md`](./README-KO.md).
 
 After installation:
 

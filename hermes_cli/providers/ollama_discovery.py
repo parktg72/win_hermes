@@ -32,7 +32,12 @@ async def fetch_ollama_models() -> list[str]:
             resp.raise_for_status()
             data = resp.json()
             return [m["name"] for m in data.get("models", [])]
-    except httpx.TransportError as exc:
+    except httpx.HTTPStatusError as exc:
+        raise OllamaNotRunningError(
+            f"Ollama 서버가 오류를 반환했습니다 (HTTP {exc.response.status_code}). "
+            f"`ollama serve`를 재시작 후 다시 시도하세요."
+        ) from exc
+    except httpx.HTTPError as exc:
         raise OllamaNotRunningError(
             "Ollama가 실행되지 않았습니다. `ollama serve` 실행 후 재시작하세요."
         ) from exc

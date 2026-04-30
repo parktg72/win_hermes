@@ -45,6 +45,39 @@ async def test_fetch_ollama_models_raises_on_read_error():
             await fetch_ollama_models()
 
 
+@pytest.mark.asyncio
+async def test_fetch_ollama_models_raises_on_http_status_error():
+    import httpx
+    mock_resp = AsyncMock()
+    mock_resp.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError(
+            "500 Server Error",
+            request=MagicMock(),
+            response=MagicMock(status_code=500),
+        )
+    )
+    with patch("hermes_cli.providers.ollama_discovery.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__ = AsyncMock(return_value=MagicMock(
+            get=AsyncMock(return_value=mock_resp)
+        ))
+        mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+        with pytest.raises(OllamaNotRunningError):
+            await fetch_ollama_models()
+
+
+@pytest.mark.asyncio
+async def test_fetch_ollama_models_error_message_is_korean():
+    import httpx
+    with patch("hermes_cli.providers.ollama_discovery.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+        with pytest.raises(OllamaNotRunningError) as excinfo:
+            await fetch_ollama_models()
+    assert "Ollama" in str(excinfo.value)
+    assert "ollama serve" in str(excinfo.value)
+    assert any("가" <= ch <= "힣" for ch in str(excinfo.value)), "expected Korean characters"
+
+
 def test_select_model_saved_empty_string_falls_through():
     result = select_model(["mistral:7b"], saved="", auto_pick_first=True)
     assert result == "mistral:7b"
