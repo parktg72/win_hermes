@@ -1159,9 +1159,8 @@ def _launch_tui(
 def _maybe_setup_ollama_model() -> None:
     """Detect Ollama on localhost and set HERMES_MODEL env var if not already set.
 
-    Only activates when the active provider is not already configured
-    or when the user explicitly runs in Ollama mode.
-    Silently skips if Ollama is not running.
+    Prints a Korean error and exits with code 1 if Ollama is not reachable.
+    Skips silently if HERMES_MODEL is already set.
     """
     import asyncio
 
@@ -1202,8 +1201,10 @@ def _maybe_setup_ollama_model() -> None:
         os.environ.setdefault("HERMES_MODEL", f"ollama/{chosen}")
         print(f"Using Ollama model: {chosen}")
 
-    except (OllamaNotRunningError, ValueError, OSError):
-        # Ollama not running or not configured — silently skip
+    except OllamaNotRunningError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+    except (ValueError, OSError):
         pass
 
 
