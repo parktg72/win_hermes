@@ -68,6 +68,11 @@ def test_setup_writes_config_yaml_with_custom_provider(tmp_path, monkeypatch):
         pass
 
     fake_module.OllamaNotRunningError = _NotRunning
+    # Re-export the real resolve_ollama_base_url so _maybe_setup_ollama_model
+    # picks the OLLAMA_HOST-aware URL (mocking it would return MagicMock).
+    from hermes_cli.providers.ollama_discovery import resolve_ollama_base_url
+
+    fake_module.resolve_ollama_base_url = resolve_ollama_base_url
 
     monkeypatch.setitem(
         sys.modules,
@@ -176,6 +181,9 @@ def test_routing_actually_lands_on_localhost(tmp_path, monkeypatch):
     fake_module = MagicMock()
     fake_module.fetch_ollama_models = AsyncMock(return_value=["llama3.1:8b"])
     fake_module.select_model = MagicMock(return_value="llama3.1:8b")
+    from hermes_cli.providers.ollama_discovery import resolve_ollama_base_url
+
+    fake_module.resolve_ollama_base_url = resolve_ollama_base_url
 
     class _NotRunning(RuntimeError):
         pass
@@ -223,6 +231,80 @@ def test_routing_actually_lands_on_localhost(tmp_path, monkeypatch):
     assert "127.0.0.1:11434" in runtime["base_url"]
     assert "anthropic" not in runtime.get("base_url", "").lower()
     assert "openai.com" not in runtime.get("base_url", "").lower()
+
+
+def test_resolve_ollama_base_url_honors_host_env(monkeypatch):
+    """OLLAMA_HOST env should drive discovery + routing URL.
+
+    Mirrors Ollama's own env parsing — accept 'host:port', 'port', or
+    full URLs.  Ensures users with custom ports (corp port already in
+    use, multiple instances) don't fall back to 127.0.0.1:11434.
+    """
+    from hermes_cli.providers.ollama_discovery import resolve_ollama_base_url
+
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    assert resolve_ollama_base_url() == "http://127.0.0.1:11434"
+
+    monkeypatch.setenv("OLLAMA_HOST", "11500")
+    assert resolve_ollama_base_url() == "http://127.0.0.1:11500"
+
+    monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:11500")
+    assert resolve_ollama_base_url() == "http://0.0.0.0:11500"
+
+    monkeypatch.setenv("OLLAMA_HOST", "https://ollama.internal:443")
+    assert resolve_ollama_base_url() == "https://ollama.internal:443"
+
+    monkeypatch.setenv("OLLAMA_HOST", "http://gpu-host:11434/")
+    assert resolve_ollama_base_url() == "http://gpu-host:11434"
+
+
+def test_setup_routes_through_ollama_host_when_set(tmp_path, monkeypatch):
+    """When OLLAMA_HOST is set, the config.yaml + env vars must point
+    at the same custom endpoint, not the default 127.0.0.1:11434."""
+    main_mod = _import_main()
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    for var in ("HERMES_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("OLLAMA_HOST", "11500")  # custom port
+
+    from unittest.mock import AsyncMock
+
+    fake_module = MagicMock()
+    fake_module.fetch_ollama_models = AsyncMock(return_value=["llama3.1:8b"])
+    fake_module.select_model = MagicMock(return_value="llama3.1:8b")
+    # resolve_ollama_base_url is a real function — re-export from the
+    # mocked module so the test exercises the real env-honoring logic.
+    from hermes_cli.providers.ollama_discovery import resolve_ollama_base_url
+
+    fake_module.resolve_ollama_base_url = resolve_ollama_base_url
+
+    class _NotRunning(RuntimeError):
+        pass
+
+    fake_module.OllamaNotRunningError = _NotRunning
+    monkeypatch.setitem(
+        sys.modules,
+        "hermes_cli.providers.ollama_discovery",
+        fake_module,
+    )
+
+    import cli as _cli_mod  # noqa: WPS433
+
+    monkeypatch.setattr(_cli_mod, "_hermes_home", hermes_home, raising=False)
+
+    main_mod._maybe_setup_ollama_model()
+
+    import os
+
+    import yaml  # type: ignore[import-untyped]
+
+    cfg = yaml.safe_load((hermes_home / "config.yaml").read_text())
+    assert cfg["model"]["base_url"] == "http://127.0.0.1:11500/v1"
+    assert os.environ.get("OPENAI_BASE_URL") == "http://127.0.0.1:11500/v1"
 
 
 def test_setup_preserves_existing_no_proxy(tmp_path, monkeypatch):

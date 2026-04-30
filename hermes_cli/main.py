@@ -1199,10 +1199,12 @@ def _maybe_setup_ollama_model() -> None:
         models = asyncio.run(fetch_ollama_models())
         chosen = select_model(models, saved=saved_model)
 
-        base_url = f"{_OLLAMA_DEFAULT_BASE}/v1"
-        # Note: OLLAMA_HOST env var override is NOT honored here.
-        # Default Ollama install uses 11434 — handle as follow-up if
-        # users with custom ports report routing issues.
+        # Honor OLLAMA_HOST env (user bound Ollama to custom port).
+        # resolve_ollama_base_url returns canonical "http://host:port"
+        # without trailing /v1 — append the OpenAI-compat suffix.
+        from hermes_cli.providers.ollama_discovery import resolve_ollama_base_url
+
+        base_url = f"{resolve_ollama_base_url(_OLLAMA_DEFAULT_BASE)}/v1"
 
         # save_config_value() in cli.py picks user vs. project config based
         # on whether ~/.hermes/config.yaml *exists*.  On first run it

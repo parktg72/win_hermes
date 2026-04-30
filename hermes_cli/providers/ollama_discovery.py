@@ -1,6 +1,7 @@
 """Discover and select Ollama models running on localhost."""
 from __future__ import annotations
 
+import os
 import sys
 from typing import Optional
 
@@ -9,7 +10,7 @@ try:
 except ImportError:
     httpx = None  # type: ignore[assignment]
 
-OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_BASE = "http://127.0.0.1:11434"  # 127.0.0.1 avoids IPv6 dual-stack
 TIMEOUT = 2.0
 
 
@@ -17,8 +18,37 @@ class OllamaNotRunningError(RuntimeError):
     """Raised when Ollama is not reachable on localhost:11434."""
 
 
-async def fetch_ollama_models() -> list[str]:
+def resolve_ollama_base_url(default: str = OLLAMA_BASE) -> str:
+    """Return the effective Ollama base URL, honoring ``OLLAMA_HOST``.
+
+    Ollama itself reads the ``OLLAMA_HOST`` env var to decide where to
+    listen (defaults to 127.0.0.1:11434).  If a user has bound it to a
+    custom port (corp port already in use, multiple instances, etc.),
+    discovery + routing must follow.
+
+    Accepted formats (mirrors Ollama's own parsing):
+      - "http://host:port"   — used as-is
+      - "https://host:port"  — used as-is
+      - "host:port"          — http:// prefixed
+      - "port"               — bound to 127.0.0.1:<port>
+    """
+    raw = (os.environ.get("OLLAMA_HOST") or "").strip()
+    if not raw:
+        return default
+    if "://" in raw:
+        return raw.rstrip("/")
+    if raw.isdigit():
+        return f"http://127.0.0.1:{raw}"
+    return f"http://{raw}".rstrip("/")
+
+
+async def fetch_ollama_models(base_url: Optional[str] = None) -> list[str]:
     """Return list of model names from running Ollama instance.
+
+    Args:
+        base_url: Override discovery URL.  Defaults to
+            :func:`resolve_ollama_base_url` (which honors
+            ``OLLAMA_HOST``).  Tests pass an explicit URL.
 
     Raises:
         OllamaNotRunningError: if Ollama is not reachable.
@@ -26,9 +56,11 @@ async def fetch_ollama_models() -> list[str]:
     if httpx is None:
         raise ImportError("httpx is required for Ollama discovery")
 
+    target = base_url or resolve_ollama_base_url()
+
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.get(f"{OLLAMA_BASE}/api/tags")
+            resp = await client.get(f"{target}/api/tags")
             resp.raise_for_status()
             data = resp.json()
             return [m["name"] for m in data.get("models", [])]
