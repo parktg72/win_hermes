@@ -7,7 +7,7 @@ Run on an internet-connected machine (any OS). Two ways:
     Any OS:     python scripts/download_wheels.py
 
 Downloads win_amd64 / cp312 wheels into vendor/wheels/, then verifies
-that 4 critical packages are present so missing-wheel surprises are
+that critical packages are present so missing-wheel surprises are
 caught here, not on the target intranet PC.
 """
 import subprocess
@@ -18,7 +18,8 @@ VENDOR_WHEELS = Path(__file__).parent.parent / "vendor" / "wheels"
 
 # Wheels that install.bat absolutely needs. If any are missing, abort
 # loudly so the operator fixes it before zipping the release.
-CRITICAL_PACKAGES = ["httpx", "colorama", "pywinpty", "prompt_toolkit"]
+BUILD_PACKAGES = ["setuptools>=61.0"]
+CRITICAL_PACKAGES = ["setuptools", "httpx", "colorama", "pywinpty", "prompt_toolkit"]
 
 
 def _normalize(name: str) -> str:
@@ -36,6 +37,7 @@ def main() -> None:
     cmd = [
         sys.executable, "-m", "pip", "download",
         ".[windows]",
+        *BUILD_PACKAGES,
         "--dest", str(VENDOR_WHEELS),
         "--platform", "win_amd64",
         "--python-version", "3.12",
@@ -59,7 +61,7 @@ def main() -> None:
         print("이대로 사내망 PC에 옮기면 install.bat이 실패합니다.")
         print("pip을 업그레이드하거나 pyproject.toml [windows] 의존성을 확인하세요.")
         sys.exit(2)
-    print(f"핵심 패키지 4종 확인 완료: {', '.join(CRITICAL_PACKAGES)}")
+    print(f"핵심 패키지 확인 완료: {', '.join(CRITICAL_PACKAGES)}")
     print("\n다음 단계: vendor/ 폴더를 사내망 PC로 복사 후 install.bat 실행")
 
 

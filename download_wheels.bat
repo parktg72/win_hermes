@@ -5,7 +5,7 @@ setlocal
 REM 외부망(PyPI/GitHub 접근 가능) PC에서 더블클릭하여 폐쇄망 배포에 필요한
 REM 두 가지를 한 번에 받는 스크립트:
 REM   1) vendor\uv.exe         (astral-sh/uv 공식 릴리스, SHA256 검증)
-REM   2) vendor\wheels\*.whl   (win_amd64 / cp312 휠, 핵심 4종 검증)
+REM   2) vendor\wheels\*.whl   (win_amd64 / cp312 휠, 핵심 패키지 검증)
 
 cd /d "%~dp0"
 

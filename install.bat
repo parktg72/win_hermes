@@ -2,6 +2,8 @@
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
+set "PYTHON_EXE=%~dp0venv\Scripts\python.exe"
+set "WHEEL_DIR=%~dp0vendor\wheels"
 
 echo === Hermes Windows Installer ===
 echo.
@@ -51,17 +53,49 @@ if !ERRORLEVEL! neq 0 (
     pause
     exit /b 1
 )
+if not exist "!PYTHON_EXE!" (
+    echo [오류] 가상환경 Python을 찾을 수 없습니다.
+    echo        !PYTHON_EXE!
+    pause
+    exit /b 1
+)
 
 :: Step 3: Install packages from vendor/wheels (offline)
 echo [3/5] 패키지 설치 중 ^(오프라인^)...
-if exist "!SCRIPT_DIR!vendor\wheels" (
-    "!UV_CMD!" pip install --python "!SCRIPT_DIR!venv\Scripts\python.exe" ^
-        --quiet --no-index --find-links "!SCRIPT_DIR!vendor\wheels" ^
-        -e "!SCRIPT_DIR!.[windows]"
+if exist "!WHEEL_DIR!" (
+    dir /b "!WHEEL_DIR!\*.whl" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo [오류] vendor\wheels 폴더에 wheel 파일이 없습니다.
+        echo        외부망 PC에서 download_wheels.bat을 다시 실행한 뒤 vendor 폴더를 복사하세요.
+        pause
+        exit /b 1
+    )
+
+    dir /b "!WHEEL_DIR!\setuptools-*.whl" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo [오류] vendor\wheels에 setuptools wheel이 없습니다.
+        echo        패키지 설치에는 setuptools가 필요합니다.
+        echo        외부망 PC에서 최신 download_wheels.bat을 다시 실행한 뒤 vendor 폴더를 복사하세요.
+        pause
+        exit /b 1
+    )
+
+    "!UV_CMD!" pip install --python "!PYTHON_EXE!" ^
+        --no-index --find-links "!WHEEL_DIR!" ^
+        "setuptools>=61.0"
+    if !ERRORLEVEL! neq 0 (
+        echo [오류] setuptools 설치 실패
+        pause
+        exit /b 1
+    )
+
+    "!UV_CMD!" pip install --python "!PYTHON_EXE!" ^
+        --no-build-isolation --no-index --find-links "!WHEEL_DIR!" ^
+        -e ".[windows]"
 ) else (
     echo [경고] vendor\wheels 폴더 없음. 온라인 설치 시도...
-    "!UV_CMD!" pip install --python "!SCRIPT_DIR!venv\Scripts\python.exe" ^
-        --quiet -e "!SCRIPT_DIR!.[windows]"
+    "!UV_CMD!" pip install --python "!PYTHON_EXE!" ^
+        -e ".[windows]"
 )
 if !ERRORLEVEL! neq 0 (
     echo [오류] 패키지 설치 실패

@@ -70,7 +70,7 @@ PC 두 대가 필요합니다.
    - `[3/4] 휠 다운로드 시작 (몇 분 걸릴 수 있습니다)...`
    - `[4/4] 완료`
 4. 정상 종료되면 폴더 안에 `vendor\uv.exe` 파일과 `vendor\wheels\` 디렉터리가 생기고, wheels에는 약 30~60개의 `.whl` 파일이 채워집니다.
-5. 마지막에 `핵심 패키지 4종 확인 완료: httpx, colorama, pywinpty, prompt_toolkit` 가 보이면 성공.
+5. 마지막에 `핵심 패키지 확인 완료: setuptools, httpx, colorama, pywinpty, prompt_toolkit` 가 보이면 성공.
 
 문제가 생기면 창은 닫히지 않고 한국어 안내가 표시됩니다. `pause` 단계에서 메시지를 읽고 닫으세요.
 

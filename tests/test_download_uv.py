@@ -84,3 +84,17 @@ def test_download_wheels_bat_invokes_download_uv():
     assert b"scripts\\download_wheels.py" in bat
     # uv.exe step must come before wheels step
     assert bat.index(b"download_uv.py") < bat.index(b"download_wheels.py")
+
+
+def test_download_wheels_includes_build_backend():
+    script = (REPO_ROOT / "scripts" / "download_wheels.py").read_text()
+    assert "setuptools>=61.0" in script
+    assert '"setuptools"' in script
+
+
+def test_install_bat_uses_offline_build_backend_before_editable_install():
+    bat = (REPO_ROOT / "install.bat").read_text(encoding="utf-8")
+    assert "setuptools-*.whl" in bat
+    assert '"setuptools>=61.0"' in bat
+    assert "--no-build-isolation" in bat
+    assert '-e ".[windows]"' in bat

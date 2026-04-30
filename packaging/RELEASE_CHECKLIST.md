@@ -29,7 +29,7 @@ python scripts/download_wheels.py
 `download_uv.py`는 astral-sh/uv 공식 릴리스 zip을 받아 `.sha256`과 대조한 뒤
 `vendor/uv.exe`를 작성합니다. 다른 버전이 필요하면 `UV_VERSION=0.x.y` 환경변수로 override.
 
-`download_wheels.py`는 핵심 패키지 4종(httpx, colorama, pywinpty, prompt_toolkit)을
+`download_wheels.py`는 핵심 패키지(setuptools, httpx, colorama, pywinpty, prompt_toolkit)를
 자동 검증하고 누락 시 종료 코드 2로 실패합니다.
 
 검증 (스크립트가 실패하지 않으면 자동 통과 — 아래는 수동 더블체크용):
@@ -37,7 +37,7 @@ python scripts/download_wheels.py
 - [ ] `vendor/uv.exe` 파일 존재 (대략 15~25MB)
 - [ ] `vendor/wheels/` 디렉터리 존재
 - [ ] `ls vendor/wheels/*.whl | wc -l` ≥ 30 (대략 — pyproject `[windows]` extra 의존성 트리)
-- [ ] `download_wheels.py` 마지막 출력에 `핵심 패키지 4종 확인 완료` 보임
+- [ ] `download_wheels.py` 마지막 출력에 `핵심 패키지 확인 완료` 보임
 - [ ] `download_uv.py` 마지막 출력에 `vendor/uv.exe 작성 완료` 또는 `이미 최신` 보임
 
 문제 발생 시:
