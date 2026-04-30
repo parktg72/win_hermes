@@ -1,11 +1,12 @@
 @echo off
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
+set "SCRIPT_DIR=%~dp0"
 
 echo === Hermes Windows Installer ===
 echo.
 
-cd /d "%~dp0"
+cd /d "!SCRIPT_DIR!"
 
 :: Step 1: Ensure uv is available
 set "UV_CMD="
@@ -13,10 +14,10 @@ where uv >nul 2>&1
 if !ERRORLEVEL! equ 0 (
     set "UV_CMD=uv"
 ) else (
-    if exist "%~dp0vendor\uv.exe" (
-        set "UV_CMD=%~dp0vendor\uv.exe"
-    ) else if exist "%LOCALAPPDATA%\uv\bin\uv.exe" (
-        set "UV_CMD=%LOCALAPPDATA%\uv\bin\uv.exe"
+    if exist "!SCRIPT_DIR!vendor\uv.exe" (
+        set "UV_CMD=!SCRIPT_DIR!vendor\uv.exe"
+    ) else if exist "!LOCALAPPDATA!\uv\bin\uv.exe" (
+        set "UV_CMD=!LOCALAPPDATA!\uv\bin\uv.exe"
     ) else (
         echo [오류] uv.exe를 찾을 수 없습니다.
         echo vendor\uv.exe 파일이 있는지 확인하세요.
@@ -33,9 +34,9 @@ py -3.12 --version >nul 2>&1
 if %ERRORLEVEL% equ 0 set "PY312=1"
 
 if defined PY312 (
-    "!UV_CMD!" venv "%~dp0venv" --python "3.12" --quiet --allow-existing
+    "!UV_CMD!" venv "!SCRIPT_DIR!venv" --python "3.12" --quiet --allow-existing
 ) else (
-    echo Python 3.12를 다운로드합니다 (인터넷 연결 필요)...
+    echo Python 3.12를 다운로드합니다 ^(인터넷 연결 필요^)...
     "!UV_CMD!" python install 3.12 --quiet
     if !ERRORLEVEL! neq 0 (
         echo [오류] Python 3.12 다운로드 실패.
@@ -43,7 +44,7 @@ if defined PY312 (
         pause
         exit /b 1
     )
-    "!UV_CMD!" venv "%~dp0venv" --python "3.12" --quiet --allow-existing
+    "!UV_CMD!" venv "!SCRIPT_DIR!venv" --python "3.12" --quiet --allow-existing
 )
 if !ERRORLEVEL! neq 0 (
     echo [오류] 가상환경 생성 실패
@@ -52,15 +53,15 @@ if !ERRORLEVEL! neq 0 (
 )
 
 :: Step 3: Install packages from vendor/wheels (offline)
-echo [3/5] 패키지 설치 중 (오프라인)...
-if exist "%~dp0vendor\wheels" (
-    "!UV_CMD!" pip install --python "%~dp0venv\Scripts\python.exe" ^
-        --quiet --no-index --find-links "%~dp0vendor\wheels" ^
-        -e "%~dp0.[windows]"
+echo [3/5] 패키지 설치 중 ^(오프라인^)...
+if exist "!SCRIPT_DIR!vendor\wheels" (
+    "!UV_CMD!" pip install --python "!SCRIPT_DIR!venv\Scripts\python.exe" ^
+        --quiet --no-index --find-links "!SCRIPT_DIR!vendor\wheels" ^
+        -e "!SCRIPT_DIR!.[windows]"
 ) else (
     echo [경고] vendor\wheels 폴더 없음. 온라인 설치 시도...
-    "!UV_CMD!" pip install --python "%~dp0venv\Scripts\python.exe" ^
-        --quiet -e "%~dp0.[windows]"
+    "!UV_CMD!" pip install --python "!SCRIPT_DIR!venv\Scripts\python.exe" ^
+        --quiet -e "!SCRIPT_DIR!.[windows]"
 )
 if !ERRORLEVEL! neq 0 (
     echo [오류] 패키지 설치 실패
@@ -72,7 +73,7 @@ if !ERRORLEVEL! neq 0 (
 echo [4/5] Ollama 연결 확인 중...
 curl -s --max-time 2 http://localhost:11434/api/tags >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo [4/5] Ollama 연결 실패 (경고):
+    echo [4/5] Ollama 연결 실패 ^(경고^):
     echo [경고] Ollama가 실행되지 않았습니다.
     echo        설치 후 ollama serve 를 실행하고 hermes.bat를 시작하세요.
 ) else (
