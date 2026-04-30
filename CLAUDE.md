@@ -52,10 +52,17 @@ NousResearch/hermes-agent의 **Windows 폐쇄 사내망용 포크**.
 
 ### 3.1 `.bat` 파일은 무조건 CRLF + UTF-8
 
-macOS에서 .bat 작성/수정 후 **즉시** 변환:
+macOS에서 .bat 작성/수정 후 **즉시** 변환. 두 단계로 — read-then-write를 분리하지 않으면 truncate 부작용으로 파일이 비워진다.
+
 ```python
-open(f,'wb').write(open(f,'rb').read().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'))
+with open(f, 'rb') as r:
+    data = r.read()
+with open(f, 'wb') as w:
+    w.write(data.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))
 ```
+
+⚠️ 한 줄 패턴 `open(f,'wb').write(open(f,'rb').read()...)` 는 평가 순서상 wb가 먼저 truncate되어 빈 파일이 됨 — **쓰지 말 것.**
+
 - `.gitattributes`의 `*.bat eol=crlf`는 **체크아웃 시에만** 적용 — 새로 만든 파일은 변환 안 됨.
 - Bash에서 `>nul` 문자열을 그대로 쓰면 셸이 리디렉션으로 해석한다. Python heredoc/스크립트 안에서는 `chr(62)+'nul'` 등으로 우회.
 

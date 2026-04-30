@@ -15,20 +15,24 @@
 
 ## 2. 휠 다운로드 (오프라인 설치용)
 
+외부망(PyPI 가능) PC에서. 둘 중 하나:
+
 ```bash
-# 외부망 가능 환경에서:
+# Windows에서 더블클릭 (권장):
+download_wheels.bat
+
+# 또는 명령줄 (macOS/Linux/Windows):
 python scripts/download_wheels.py
 ```
 
-검증:
+스크립트가 끝나면 핵심 패키지 4종(httpx, colorama, pywinpty, prompt_toolkit)을
+자동 검증하고 누락 시 종료 코드 2로 실패합니다.
+
+검증 (스크립트가 실패하지 않으면 자동 통과 — 아래는 수동 더블체크용):
 
 - [ ] `vendor/wheels/` 디렉터리 존재
 - [ ] `ls vendor/wheels/*.whl | wc -l` ≥ 30 (대략 — pyproject `[windows]` extra 의존성 트리)
-- [ ] **핵심 휠 4종 존재 확인:**
-  ```bash
-  ls vendor/wheels/ | grep -Ei "^(httpx|colorama|pywinpty|prompt_toolkit)"
-  ```
-  네 가지 모두 win_amd64/cp312 wheel 파일이 있어야 함.
+- [ ] 스크립트 마지막 출력에 `핵심 패키지 4종 확인 완료` 보임
 
 문제 발생 시:
 - pip 22 이상에서 `--only-binary :all:` 실패 → `pip install -U pip` 후 재시도
