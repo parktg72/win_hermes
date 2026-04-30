@@ -74,3 +74,4 @@ models-dev-upstream/
 # Offline Windows wheel cache and binary
 vendor/wheels/
 vendor/uv.exe
+vendor/uv.exe.sha256

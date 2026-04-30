@@ -30,19 +30,21 @@ PC 두 대가 필요합니다.
 
 ```
 [외부망 PC] (인터넷 가능)
-  1) download_wheels.bat 더블클릭  →  vendor\wheels\ 폴더 자동 생성
+  1) download_wheels.bat 더블클릭
+       → vendor\uv.exe 다운로드 (SHA256 검증)
+       → vendor\wheels\ 폴더 자동 생성
   2) win_hermes 폴더 전체를 USB나 공유 드라이브로 복사
 
            │
            ▼
 
 [사내망 PC]
-  3) 복사한 폴더에서 install.bat 더블클릭   →  vendor\wheels\ 사용해 오프라인 설치
+  3) 복사한 폴더에서 install.bat 더블클릭   →  vendor\ 사용해 오프라인 설치
   4) ollama serve / ollama pull <model>
   5) hermes chat .
 ```
 
-`install.bat`은 `vendor\wheels\` 폴더가 있으면 자동으로 그것만 사용해서 설치합니다(인터넷 안 봄). 폴더가 없으면 인터넷 설치를 시도하다 실패합니다.
+`install.bat`은 `vendor\uv.exe`와 `vendor\wheels\` 가 있으면 자동으로 그것만 사용해서 설치합니다(인터넷 안 봄). 둘 중 하나라도 없으면 인터넷 설치를 시도하다 실패합니다.
 
 ---
 
@@ -63,19 +65,20 @@ PC 두 대가 필요합니다.
 1. win_hermes 폴더를 외부망 PC에 복사 (또는 git clone).
 2. 폴더 안의 **`download_wheels.bat`을 더블클릭**.
 3. 진행 메시지:
-   - `[1/3] Python 3.12 확인 중...`
-   - `[2/3] 휠 다운로드 시작 (몇 분 걸릴 수 있습니다)...`
-   - `[3/3] 완료`
-4. 정상 종료되면 폴더 안에 `vendor\wheels\` 가 생기고 약 30~60개의 `.whl` 파일이 채워집니다.
+   - `[1/4] Python 3.12 확인 중...`
+   - `[2/4] uv.exe 다운로드 (SHA256 검증 포함)...`
+   - `[3/4] 휠 다운로드 시작 (몇 분 걸릴 수 있습니다)...`
+   - `[4/4] 완료`
+4. 정상 종료되면 폴더 안에 `vendor\uv.exe` 파일과 `vendor\wheels\` 디렉터리가 생기고, wheels에는 약 30~60개의 `.whl` 파일이 채워집니다.
 5. 마지막에 `핵심 패키지 4종 확인 완료: httpx, colorama, pywinpty, prompt_toolkit` 가 보이면 성공.
 
 문제가 생기면 창은 닫히지 않고 한국어 안내가 표시됩니다. `pause` 단계에서 메시지를 읽고 닫으세요.
 
 ### 2-2. 사내망 PC로 옮기기
 
-`vendor\wheels\` 폴더가 포함된 **win_hermes 폴더 전체**를 USB 또는 사내 공유 드라이브로 사내망 PC에 복사.
+`vendor\uv.exe` 파일과 `vendor\wheels\` 폴더가 포함된 **win_hermes 폴더 전체**를 USB 또는 사내 공유 드라이브로 사내망 PC에 복사.
 
-> 핵심: `vendor\wheels\` 폴더가 빠지면 시나리오 A로 떨어져서 사내망에서 인터넷 설치 시도 → 실패합니다.
+> 핵심: `vendor\uv.exe` 또는 `vendor\wheels\` 가 빠지면 시나리오 A로 떨어져서 사내망에서 인터넷 설치 시도 → 실패합니다.
 
 ### 2-3. 사내망 PC에서 설치
 

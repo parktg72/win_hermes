@@ -79,12 +79,14 @@ with open(f, 'wb') as w:
 
 스택트레이스 노출 금지. `OllamaNotRunningError` 패턴을 다른 사용자-대면 에러에도 동일하게 적용.
 
-### 3.4 Wheel 벤더링
+### 3.4 Wheel / uv.exe 벤더링
 
+- `scripts/download_uv.py` — astral-sh/uv 공식 릴리스에서 `uv.exe`를 받아 SHA256 검증 후 `vendor/uv.exe` 작성. `UV_VERSION` env로 버전 override.
 - `scripts/download_wheels.py` — `win_amd64`/`cp312` 한정으로 받는다.
-- 벤더 바이너리는 **gitignore**, 릴리스 zip에만 포함.
+- 외부망 PC 작업은 `download_wheels.bat` 한 번 더블클릭으로 두 스크립트 모두 실행됨.
+- 벤더 바이너리(`vendor/uv.exe`, `vendor/wheels/`)는 **gitignore**, 릴리스 zip에만 포함.
 - 새 의존성 추가 시 `pyproject.toml`만 고치지 말고 wheel 다운로드 명단/문서도 같이 갱신.
-- 릴리스 빌드 절차는 **`packaging/RELEASE_CHECKLIST.md` 따른다** — 휠 개수 검증, .bat CRLF 검증, 스모크 테스트(traceback 누수 회귀 확인)까지 포함.
+- 릴리스 빌드 절차는 **`packaging/RELEASE_CHECKLIST.md` 따른다** — 휠 개수 + uv.exe 존재 검증, .bat CRLF 검증, 스모크 테스트(traceback 누수 회귀 확인)까지 포함.
 
 ---
 

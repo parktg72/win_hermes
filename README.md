@@ -2,7 +2,7 @@
 > **이 저장소는 [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)의 Windows 폐쇄 사내망용 포크입니다.**
 >
 > - Windows 사용자: `install.bat`을 더블클릭하세요. 한국어 안내는 [`README-KO.md`](./README-KO.md) 참조.
-> - 사내망 / PyPI 차단 환경: `python scripts/download_wheels.py`로 휠을 미리 받아 `vendor/wheels/`에 두면 오프라인 설치됩니다.
+> - 사내망 / PyPI 차단 환경: 외부망 PC에서 `download_wheels.bat`(또는 `python scripts/download_uv.py && python scripts/download_wheels.py`)로 `vendor/uv.exe`와 `vendor/wheels/`를 받은 뒤 폴더째 옮겨 `install.bat`을 실행하면 오프라인 설치됩니다.
 > - 이하 본문은 upstream(Linux/macOS/WSL2) 문서이며 win_hermes에는 일부만 적용됩니다.
 
 <p align="center">

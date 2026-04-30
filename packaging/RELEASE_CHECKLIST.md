@@ -13,28 +13,36 @@
 
 ---
 
-## 2. 휠 다운로드 (오프라인 설치용)
+## 2. 오프라인 vendor/ 준비 (uv.exe + 휠)
 
-외부망(PyPI 가능) PC에서. 둘 중 하나:
+외부망(PyPI/GitHub 가능) PC에서. 둘 중 하나:
 
 ```bash
-# Windows에서 더블클릭 (권장):
+# Windows에서 더블클릭 (권장) — uv.exe + 휠을 한 번에:
 download_wheels.bat
 
-# 또는 명령줄 (macOS/Linux/Windows):
+# 또는 명령줄 (macOS/Linux/Windows) — 둘 다 실행해야 함:
+python scripts/download_uv.py
 python scripts/download_wheels.py
 ```
 
-스크립트가 끝나면 핵심 패키지 4종(httpx, colorama, pywinpty, prompt_toolkit)을
+`download_uv.py`는 astral-sh/uv 공식 릴리스 zip을 받아 `.sha256`과 대조한 뒤
+`vendor/uv.exe`를 작성합니다. 다른 버전이 필요하면 `UV_VERSION=0.x.y` 환경변수로 override.
+
+`download_wheels.py`는 핵심 패키지 4종(httpx, colorama, pywinpty, prompt_toolkit)을
 자동 검증하고 누락 시 종료 코드 2로 실패합니다.
 
 검증 (스크립트가 실패하지 않으면 자동 통과 — 아래는 수동 더블체크용):
 
+- [ ] `vendor/uv.exe` 파일 존재 (대략 15~25MB)
 - [ ] `vendor/wheels/` 디렉터리 존재
 - [ ] `ls vendor/wheels/*.whl | wc -l` ≥ 30 (대략 — pyproject `[windows]` extra 의존성 트리)
-- [ ] 스크립트 마지막 출력에 `핵심 패키지 4종 확인 완료` 보임
+- [ ] `download_wheels.py` 마지막 출력에 `핵심 패키지 4종 확인 완료` 보임
+- [ ] `download_uv.py` 마지막 출력에 `vendor/uv.exe 작성 완료` 또는 `이미 최신` 보임
 
 문제 발생 시:
+- `download_uv.py`에서 HTTP 404 → `UV_VERSION` 값이 실제 릴리스되지 않은 버전. https://github.com/astral-sh/uv/releases 에서 확인
+- `download_uv.py`에서 SHA256 불일치 → 네트워크 손상 의심, 재시도. 반복되면 다른 회선/PC
 - pip 22 이상에서 `--only-binary :all:` 실패 → `pip install -U pip` 후 재시도
 - 특정 패키지가 wheel 없음 → 해당 의존성을 `pyproject.toml [project.optional-dependencies] windows`에서 점검 (sdist만 있는 패키지는 폐쇄망 빌드 어려움 → 대체 라이브러리 검토)
 
@@ -76,25 +84,45 @@ uv run pytest tests/ -q
 | 포함 | 제외 |
 |---|---|
 | `hermes_cli/`, `hermes_*.py`, `pyproject.toml`, `uv.lock` | `.git/`, `__pycache__/`, `*.pyc` |
-| `install.bat`, `hermes.bat` | `tests/`, `docs/`, `website/` |
-| `vendor/wheels/` (오프라인 설치 핵심) | `tinker-atropos/`, `optional-skills/`, `temp_vision_images/` |
-| `README.md`, `README-KO.md`, `CLAUDE.md`, `LICENSE` | `node_modules/`, `package-lock.json` |
-| `scripts/download_wheels.py` (재배포 시 참고용) | 기타 사내 비공개 자료 |
+| `install.bat`, `hermes.bat`, `download_wheels.bat` | `tests/`, `docs/`, `website/` |
+| `vendor/uv.exe` (오프라인 설치 핵심) | `tinker-atropos/`, `optional-skills/`, `temp_vision_images/` |
+| `vendor/wheels/` (오프라인 설치 핵심) | `node_modules/`, `package-lock.json` |
+| `README.md`, `README-KO.md`, `CLAUDE.md`, `LICENSE` | 기타 사내 비공개 자료 |
+| `scripts/download_uv.py`, `scripts/download_wheels.py` (재배포 시 참고용) | |
 
 빌드 명령 예시 (macOS):
 
 ```bash
 VERSION=v0.11.0-win.1
-git archive --format=zip --prefix=win_hermes-${VERSION}/ HEAD -o /tmp/win_hermes-${VERSION}.zip
-# vendor/wheels는 git에 없으므로 별도 추가:
-zip -r /tmp/win_hermes-${VERSION}.zip vendor/wheels -x "*.pyc"
+PREFIX=win_hermes-${VERSION}
+ZIP=/tmp/${PREFIX}.zip
+
+# 1) 스테이징 디렉터리에 git tracked 파일 + vendor/ 를 한 트리로 모은다.
+#    이렇게 해야 install.bat과 vendor/ 가 같은 prefix 아래 들어가서
+#    압축 해제 후 install.bat이 %~dp0vendor\uv.exe 를 찾을 수 있다.
+STAGE=$(mktemp -d)
+git archive HEAD | tar -x -C "${STAGE}/"
+mkdir -p "${STAGE}/vendor"
+cp vendor/uv.exe "${STAGE}/vendor/uv.exe"
+cp -R vendor/wheels "${STAGE}/vendor/wheels"
+
+# 2) prefix 디렉터리로 묶고 zip
+mv "${STAGE}" "/tmp/${PREFIX}"
+( cd /tmp && zip -r "${ZIP}" "${PREFIX}" -x "*.pyc" "*/__pycache__/*" )
+rm -rf "/tmp/${PREFIX}"
 ```
 
 확인:
 
-- [ ] `unzip -l /tmp/win_hermes-${VERSION}.zip | grep -c "\.whl$"` 가 휠 개수와 일치
-- [ ] `unzip -l /tmp/win_hermes-${VERSION}.zip | grep -E "(install|hermes)\.bat$"` 두 줄 출력
+- [ ] `unzip -l ${ZIP} | grep -c "${PREFIX}/.*\.whl$"` 가 휠 개수와 일치
+- [ ] `unzip -l ${ZIP} | grep -E "${PREFIX}/(install|hermes|download_wheels)\.bat$"` 세 줄 출력
+- [ ] `unzip -l ${ZIP} | grep "${PREFIX}/vendor/uv\.exe$"` 1줄 출력
+- [ ] `unzip -l ${ZIP} | head -3` — 모든 항목이 `${PREFIX}/` 하위에 있는지 확인 (orphan 파일 없음)
 - [ ] zip 크기가 비정상적으로 크지 않음 (대략 ~150~300MB 예상)
+
+> ⚠️ 과거 `git archive --prefix=` + `zip vendor/...` 조합은 vendor/ 만 zip 루트에 떨어져
+> install.bat이 `%~dp0vendor\uv.exe` 를 못 찾는 회귀를 만들었다. 위 staging 방식으로
+> install.bat과 vendor/ 가 같은 `${PREFIX}/` 트리에 들어가도록 보장한다.
 
 ---
 
