@@ -1156,6 +1156,9 @@ def _launch_tui(
     sys.exit(code)
 
 
+_OLLAMA_DEFAULT_BASE = "http://127.0.0.1:11434"  # 127.0.0.1 avoids IPv6 dual-stack
+
+
 def _maybe_setup_ollama_model() -> None:
     """Detect Ollama on localhost and set HERMES_MODEL env var if not already set.
 
@@ -1182,11 +1185,62 @@ def _maybe_setup_ollama_model() -> None:
         select_model,
         OllamaNotRunningError,
     )
+
+    def _merge_no_proxy(raw_value: str) -> str:
+        parts = [token.strip() for token in raw_value.split(",") if token.strip()]
+        seen = {token.lower() for token in parts}
+        for host in ("localhost", "127.0.0.1", "::1"):
+            if host.lower() not in seen:
+                parts.append(host)
+                seen.add(host.lower())
+        return ",".join(parts)
+
     try:
         models = asyncio.run(fetch_ollama_models())
         chosen = select_model(models, saved=saved_model)
 
-        # Persist the choice
+        base_url = f"{_OLLAMA_DEFAULT_BASE}/v1"
+        # Note: OLLAMA_HOST env var override is NOT honored here.
+        # Default Ollama install uses 11434 — handle as follow-up if
+        # users with custom ports report routing issues.
+
+        # save_config_value() in cli.py picks user vs. project config based
+        # on whether ~/.hermes/config.yaml *exists*.  On first run it
+        # doesn't, so writes would land in the project-level cli-config.yaml.
+        # Touch the user file first so save_config_value targets the right
+        # place.
+        from hermes_cli.config import get_config_path  # local import — avoid cycles
+
+        user_cfg = get_config_path()
+        user_cfg.parent.mkdir(parents=True, exist_ok=True)
+        if not user_cfg.exists():
+            user_cfg.write_text("model: {}\n", encoding="utf-8")
+
+        # Persist model routing in config.yaml (best-effort; env fallback below).
+        try:
+            from cli import save_config_value  # type: ignore[import-not-found]
+
+            ok_default = save_config_value("model.default", chosen)
+            ok_provider = save_config_value("model.provider", "custom")
+            ok_base = save_config_value("model.base_url", base_url)
+            if not (ok_default and ok_provider and ok_base):
+                print(
+                    "[경고] 설정 파일을 업데이트하지 못했습니다.\n"
+                    "        변경 사항은 이번 실행에만 적용됩니다.\n"
+                    "        다음에도 같은 모델을 쓰려면 hermes 를 다시 실행하거나\n"
+                    "        ~/.hermes/config.yaml 을 직접 편집하세요.",
+                    file=sys.stderr,
+                )
+        except Exception as exc:
+            print(
+                f"[경고] 설정 파일을 업데이트하지 못했습니다 ({exc}).\n"
+                f"        변경 사항은 이번 실행에만 적용됩니다.\n"
+                f"        다음에도 같은 모델을 쓰려면 hermes 를 다시 실행하거나\n"
+                f"        ~/.hermes/config.yaml 을 직접 편집하세요.",
+                file=sys.stderr,
+            )
+
+        # Keep legacy config.json "ollama_model" for back-compat.
         config_path.parent.mkdir(parents=True, exist_ok=True)
         existing = {}
         if config_path.exists():
@@ -1197,17 +1251,30 @@ def _maybe_setup_ollama_model() -> None:
         existing["ollama_model"] = chosen
         config_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
-        # Set the model for this session
+        # Env for this process and env-driven call paths.
+        os.environ.setdefault("OPENAI_BASE_URL", base_url)
+        if "OPENAI_API_KEY" not in os.environ:
+            os.environ["OPENAI_API_KEY"] = "no-key-required"
+        merged_no_proxy = _merge_no_proxy(
+            os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+        )
+        os.environ["NO_PROXY"] = merged_no_proxy
+        os.environ["no_proxy"] = merged_no_proxy
         os.environ.setdefault("HERMES_MODEL", f"ollama/{chosen}")
+
         print(f"Using Ollama model: {chosen}")
 
     except OllamaNotRunningError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
     except ValueError:
+        # glm-5.1 한국어 검수 — 비개발자 위해 구체적 모델명 예시 제시
         print(
-            "Ollama에 설치된 모델이 없습니다. "
-            "`ollama pull <model>` 로 모델을 먼저 받아주세요.",
+            "Ollama에 사용할 수 있는 모델이 아직 설치되어 있지 않습니다.\n"
+            "터미널에서 다음 명령으로 모델을 내려받으세요:\n"
+            "  ollama pull llama3.1:8b      # 영문/한글 둘 다 가능, 약 5GB\n"
+            "  ollama pull gemma3:12b        # 한국어 강함, 약 8GB\n"
+            "그런 다음 hermes 를 다시 실행하세요.",
             file=sys.stderr,
         )
         sys.exit(1)
