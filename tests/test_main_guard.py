@@ -5,32 +5,32 @@ from unittest.mock import patch
 import pytest
 
 
-def test_run_main_propagates_systemexit():
+def test_cli_entry_propagates_systemexit():
     """SystemExit (sys.exit(N)) must propagate untouched — main() uses it."""
-    from hermes_cli.main import _run_main
+    from hermes_cli.main import cli_entry
     with patch("hermes_cli.main.main", side_effect=SystemExit(2)):
         with pytest.raises(SystemExit) as excinfo:
-            _run_main()
+            cli_entry()
         assert excinfo.value.code == 2
 
 
-def test_run_main_keyboard_interrupt_exits_130():
+def test_cli_entry_keyboard_interrupt_exits_130():
     """Ctrl+C exits with conventional code 130, no traceback."""
-    from hermes_cli.main import _run_main
+    from hermes_cli.main import cli_entry
     with patch("hermes_cli.main.main", side_effect=KeyboardInterrupt):
         with pytest.raises(SystemExit) as excinfo:
-            _run_main()
+            cli_entry()
         assert excinfo.value.code == 130
 
 
-def test_run_main_unexpected_exception_exits_1_with_korean(capsys, tmp_path):
+def test_cli_entry_unexpected_exception_exits_1_with_korean(capsys, tmp_path):
     """Any unexpected exception → Korean stderr + exit(1) + log file written."""
-    from hermes_cli.main import _run_main, _log_unexpected_error
+    from hermes_cli.main import cli_entry, _log_unexpected_error
 
     with patch("hermes_cli.main.main", side_effect=RuntimeError("boom")):
         with patch("hermes_cli.main._log_unexpected_error") as mock_log:
             with pytest.raises(SystemExit) as excinfo:
-                _run_main()
+                cli_entry()
             assert excinfo.value.code == 1
             mock_log.assert_called_once()
 

@@ -10512,8 +10512,13 @@ def _log_unexpected_error(exc: BaseException, log_dir: Optional[Path] = None) ->
     )
 
 
-def _run_main() -> None:
-    """Top-level entry guard — keeps tracebacks away from non-developer users."""
+def cli_entry() -> None:
+    """Console-script entry point with top-level error guard.
+
+    All real invocations (the ``hermes`` console script and ``python -m
+    hermes_cli.main``) go through here — keeps tracebacks away from
+    non-developer users.
+    """
     try:
         main()
     except KeyboardInterrupt:
@@ -10526,4 +10531,4 @@ def _run_main() -> None:
 
 
 if __name__ == "__main__":
-    _run_main()
+    cli_entry()
