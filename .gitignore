@@ -75,3 +75,7 @@ models-dev-upstream/
 vendor/wheels/
 vendor/uv.exe
 vendor/uv.exe.sha256
+
+# Claude Code per-user permission/settings files (machine-local, never share)
+.claude/settings.local.json
+.claude/*.local.json
