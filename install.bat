@@ -5,19 +5,18 @@ setlocal EnableDelayedExpansion
 echo === Hermes Windows Installer ===
 echo.
 
+cd /d "%~dp0"
+
 :: Step 1: Ensure uv is available
+set "UV_CMD="
 where uv >nul 2>&1
-if %ERRORLEVEL% neq 0 (
+if !ERRORLEVEL! equ 0 (
+    set "UV_CMD=uv"
+) else (
     if exist "%~dp0vendor\uv.exe" (
-        echo uv를 설치합니다...
-        mkdir "%LOCALAPPDATA%\uv\bin" 2>nul
-        copy "%~dp0vendor\uv.exe" "%LOCALAPPDATA%\uv\bin\uv.exe" >nul
-        if %ERRORLEVEL% neq 0 (
-            echo [오류] uv.exe 복사 실패. 권한을 확인하세요.
-            pause
-            exit /b 1
-        )
-        set "PATH=%LOCALAPPDATA%\uv\bin;%PATH%"
+        set "UV_CMD=%~dp0vendor\uv.exe"
+    ) else if exist "%LOCALAPPDATA%\uv\bin\uv.exe" (
+        set "UV_CMD=%LOCALAPPDATA%\uv\bin\uv.exe"
     ) else (
         echo [오류] uv.exe를 찾을 수 없습니다.
         echo vendor\uv.exe 파일이 있는지 확인하세요.
@@ -34,19 +33,19 @@ py -3.12 --version >nul 2>&1
 if %ERRORLEVEL% equ 0 set "PY312=1"
 
 if defined PY312 (
-    uv venv "%~dp0venv" --python "3.12" --quiet --allow-existing
+    "!UV_CMD!" venv "%~dp0venv" --python "3.12" --quiet --allow-existing
 ) else (
     echo Python 3.12를 다운로드합니다 (인터넷 연결 필요)...
-    uv python install 3.12 --quiet
-    if %ERRORLEVEL% neq 0 (
+    "!UV_CMD!" python install 3.12 --quiet
+    if !ERRORLEVEL! neq 0 (
         echo [오류] Python 3.12 다운로드 실패.
         echo        Python 3.12를 먼저 설치하거나 인터넷 연결을 확인하세요.
         pause
         exit /b 1
     )
-    uv venv "%~dp0venv" --python "3.12" --quiet --allow-existing
+    "!UV_CMD!" venv "%~dp0venv" --python "3.12" --quiet --allow-existing
 )
-if %ERRORLEVEL% neq 0 (
+if !ERRORLEVEL! neq 0 (
     echo [오류] 가상환경 생성 실패
     pause
     exit /b 1
@@ -55,15 +54,15 @@ if %ERRORLEVEL% neq 0 (
 :: Step 3: Install packages from vendor/wheels (offline)
 echo [3/5] 패키지 설치 중 (오프라인)...
 if exist "%~dp0vendor\wheels" (
-    uv pip install --python "%~dp0venv\Scripts\python.exe" ^
+    "!UV_CMD!" pip install --python "%~dp0venv\Scripts\python.exe" ^
         --quiet --no-index --find-links "%~dp0vendor\wheels" ^
         -e "%~dp0.[windows]"
 ) else (
     echo [경고] vendor\wheels 폴더 없음. 온라인 설치 시도...
-    uv pip install --python "%~dp0venv\Scripts\python.exe" ^
+    "!UV_CMD!" pip install --python "%~dp0venv\Scripts\python.exe" ^
         --quiet -e "%~dp0.[windows]"
 )
-if %ERRORLEVEL% neq 0 (
+if !ERRORLEVEL! neq 0 (
     echo [오류] 패키지 설치 실패
     pause
     exit /b 1
