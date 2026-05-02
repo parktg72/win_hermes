@@ -1289,10 +1289,114 @@ def _maybe_setup_ollama_model() -> None:
         pass
 
 
+def _maybe_setup_default_backend() -> None:
+    """First-run dispatch: detect every available LLM backend and either
+    auto-configure the only one or prompt the user (Korean) when several
+    coexist.  Replaces the Ollama-only ``_maybe_setup_ollama_model`` for
+    Windows users who have other backends configured.
+
+    Skips silently when:
+      - ``HERMES_MODEL`` env is set (explicit user override)
+      - ``~/.hermes/config.yaml`` already has a non-empty ``model.provider``
+        (the user has been here before and made a choice)
+    """
+    if os.environ.get("HERMES_MODEL"):
+        return
+
+    # If config.yaml already pins a provider, respect it.
+    try:
+        from hermes_cli.config import load_config
+
+        cfg = load_config() or {}
+        model_cfg = cfg.get("model")
+        if isinstance(model_cfg, dict):
+            existing = (model_cfg.get("provider") or "").strip()
+            if existing:
+                return
+    except Exception:  # noqa: BLE001 — config load failure → fall through
+        pass
+
+    from hermes_cli.backend_discovery import detect_available_backends
+
+    options = detect_available_backends()
+
+    if not options:
+        # 0 backends — Korean guide
+        print(
+            "\n사용 가능한 LLM backend 가 감지되지 않았습니다.\n"
+            "다음 중 하나를 설정한 뒤 hermes 를 다시 실행해 주세요:\n"
+            "\n"
+            "  1) Anthropic Claude — 환경변수 ANTHROPIC_API_KEY 설정\n"
+            "  2) OpenAI          — 환경변수 OPENAI_API_KEY 설정\n"
+            "  3) Codex (ChatGPT) — `codex login` 실행 후 다시 시도\n"
+            "  4) Gemini          — 환경변수 GEMINI_API_KEY 설정\n"
+            "  5) Ollama (로컬)    — `ollama serve` 실행 + 64K+ 모델 pull\n"
+            "                       (예: `ollama pull gemma3:12b`)\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Pick — auto when single, prompt when multiple
+    if len(options) == 1:
+        chosen = options[0]
+    elif not sys.stdin.isatty():
+        # Non-interactive (gateway, CI, batch) → auto-pick top priority
+        chosen = options[0]
+    else:
+        print("\n사용 가능한 LLM backend:")
+        for i, opt in enumerate(options, 1):
+            print(f"  {i}. {opt.label}  ({opt.detail})")
+        while True:
+            try:
+                raw = input(f"번호 입력 [1-{len(options)}]: ").strip()
+                idx = int(raw) - 1
+                if 0 <= idx < len(options):
+                    chosen = options[idx]
+                    break
+            except (ValueError, EOFError):
+                pass
+            print(f"1에서 {len(options)} 사이의 번호를 입력하세요.")
+
+    # Configure
+    if chosen.id == "custom":
+        # Ollama path — delegate to Phase-1 model picker (handles 64K guard,
+        # config.yaml writes, NO_PROXY defang, OPENAI_API_KEY sentinel, etc.)
+        _maybe_setup_ollama_model()
+        return
+
+    # Non-Ollama backend: write provider + suggested model to config.yaml
+    try:
+        from hermes_cli.config import get_config_path
+
+        user_cfg = get_config_path()
+        user_cfg.parent.mkdir(parents=True, exist_ok=True)
+        if not user_cfg.exists():
+            user_cfg.write_text("model: {}\n", encoding="utf-8")
+
+        from cli import save_config_value  # type: ignore[import-not-found]
+
+        save_config_value("model.provider", chosen.id)
+        # NOTE: deliberately do NOT write model.default — let
+        # cli.main / AIAgent's get_default_model_for_provider resolve
+        # the current top-tier model at init time.  Hardcoding here
+        # would go stale the moment the vendor ships a new flagship.
+    except Exception as exc:  # noqa: BLE001 — non-fatal
+        print(
+            f"[경고] 설정 파일을 업데이트하지 못했습니다 ({exc}).\n"
+            f"        ~/.hermes/config.yaml 의 model.provider 를 직접\n"
+            f"        '{chosen.id}' 로 설정해 주세요.",
+            file=sys.stderr,
+        )
+
+    print(f"Using {chosen.label} (provider={chosen.id})")
+
+
 def cmd_chat(args):
     """Run interactive chat CLI."""
-    # Ollama auto-discovery (Windows-native deployment uses Ollama)
-    _maybe_setup_ollama_model()
+    # Multi-backend auto-discovery — Anthropic / OpenAI / Codex / Gemini /
+    # Ollama in priority order.  Falls through to Phase-1 Ollama picker
+    # when the user picks the local backend.
+    _maybe_setup_default_backend()
 
     if getattr(args, "dir", None):
         _inject_dir_context(Path(args.dir))

@@ -1,0 +1,433 @@
+"""Phase 2 — multi-backend auto-discovery.
+
+These tests pin the contract that ``hermes`` first-run on Windows can
+detect every plausible LLM backend (Anthropic / OpenAI / Codex OAuth /
+Gemini / Ollama) and produce a deterministic priority-ordered list.
+
+Each detector is exercised in isolation (env var present / absent,
+auth file present / missing / malformed) plus the integrated
+``detect_available_backends()`` ordering.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from hermes_cli.backend_discovery import (
+    BackendOption,
+    _detect_anthropic,
+    _detect_codex_oauth,
+    _detect_gemini,
+    _detect_openai,
+    detect_available_backends,
+)
+
+
+# Helpers ─────────────────────────────────────────────────────────────
+
+
+def _clear_env(monkeypatch):
+    for var in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Anthropic
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_anthropic_detected_via_api_key(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xxxx")
+    opt = _detect_anthropic()
+    assert isinstance(opt, BackendOption)
+    assert opt.id == "anthropic"
+    assert "Anthropic" in opt.label
+
+
+def test_anthropic_detected_via_oauth_token(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token-xxx")
+    assert _detect_anthropic() is not None
+
+
+def test_anthropic_not_detected_when_unset(monkeypatch):
+    _clear_env(monkeypatch)
+    assert _detect_anthropic() is None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# OpenAI
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_openai_detected_via_api_key(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-xxxx")
+    opt = _detect_openai()
+    assert isinstance(opt, BackendOption)
+    assert opt.id == "openai"
+
+
+def test_openai_ignores_ollama_sentinel(monkeypatch):
+    """Phase-1 sets OPENAI_API_KEY='no-key-required' when routing to Ollama.
+    Phase-2 detector must NOT treat that as a real OpenAI backend —
+    otherwise Ollama users would falsely see 'OpenAI' in the picker."""
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "no-key-required")
+    assert _detect_openai() is None
+
+
+def test_openai_not_detected_when_blank(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    assert _detect_openai() is None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Codex OAuth — ~/.codex/auth.json
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _write_codex_auth(tmp_home: Path, payload: dict | None) -> None:
+    codex_dir = tmp_home / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    auth_file = codex_dir / "auth.json"
+    if payload is None:
+        # Malformed file
+        auth_file.write_text("{ this is not json", encoding="utf-8")
+    else:
+        auth_file.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_codex_detected_with_valid_tokens(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _write_codex_auth(
+        tmp_path,
+        {"tokens": {"access_token": "abc", "refresh_token": "xyz"}},
+    )
+    opt = _detect_codex_oauth()
+    assert opt is not None
+    assert opt.id == "openai-codex"
+
+
+def test_codex_not_detected_when_file_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert _detect_codex_oauth() is None
+
+
+def test_codex_not_detected_when_tokens_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _write_codex_auth(tmp_path, {"tokens": {}})
+    assert _detect_codex_oauth() is None
+
+
+def test_codex_silent_on_malformed_json(tmp_path, monkeypatch):
+    """Malformed auth.json must not propagate JSONDecodeError to the picker."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _write_codex_auth(tmp_path, None)
+    assert _detect_codex_oauth() is None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Gemini — env or oauth file
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_gemini_detected_via_env(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-xxxx")
+    opt = _detect_gemini()
+    assert opt is not None
+    assert opt.id == "gemini"
+
+
+def test_gemini_detected_via_google_api_key(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-xxxx")
+    assert _detect_gemini() is not None
+
+
+def test_gemini_detected_via_oauth_file(tmp_path, monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    gem_dir = tmp_path / ".gemini"
+    gem_dir.mkdir()
+    (gem_dir / "oauth_creds.json").write_text(
+        '{"access_token": "ya29.xxxx"}', encoding="utf-8"
+    )
+    opt = _detect_gemini()
+    assert opt is not None
+    assert opt.id == "gemini"
+    assert "OAuth" in opt.label
+
+
+def test_gemini_not_detected_with_empty_oauth_file(tmp_path, monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    gem_dir = tmp_path / ".gemini"
+    gem_dir.mkdir()
+    (gem_dir / "oauth_creds.json").write_text("", encoding="utf-8")
+    assert _detect_gemini() is None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Aggregator — detect_available_backends()
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_aggregator_returns_empty_when_nothing_configured(tmp_path, monkeypatch):
+    """Closed-net Windows PC with no Ollama, no keys → empty list.
+    Caller (`_maybe_setup_default_backend`) interprets this as the
+    Korean "어느 backend 도 감지되지 않음" guide path."""
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    # Force Ollama detector to no-op without network calls — replace the
+    # registry tuple (patching _detect_ollama doesn't affect the frozen
+    # reference already captured in _DETECTORS).
+    import hermes_cli.backend_discovery as bd
+
+    monkeypatch.setattr(
+        bd,
+        "_DETECTORS",
+        (
+            bd._detect_anthropic,
+            bd._detect_openai,
+            bd._detect_codex_oauth,
+            bd._detect_gemini,
+            lambda: None,  # Ollama stubbed out
+        ),
+    )
+
+    assert detect_available_backends() == []
+
+
+def test_aggregator_priority_order(tmp_path, monkeypatch):
+    """Anthropic < OpenAI < Codex < Gemini < Ollama by detection order
+    (= picker display order top-first)."""
+    _clear_env(monkeypatch)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-2")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-3")
+    _write_codex_auth(
+        tmp_path, {"tokens": {"access_token": "codex-token"}}
+    )
+    # Stub Ollama as available too — replace the registry tuple so the
+    # aggregator picks up the stub (just patching _detect_ollama wouldn't
+    # affect the frozen reference inside _DETECTORS).
+    import hermes_cli.backend_discovery as bd
+
+    def _stub_ollama():
+        return BackendOption(
+            id="custom",
+            label="Ollama (로컬, 1개 모델)",
+            detail="probe ok",
+            base_url="http://127.0.0.1:11434/v1",
+        )
+
+    monkeypatch.setattr(
+        bd,
+        "_DETECTORS",
+        (
+            bd._detect_anthropic,
+            bd._detect_openai,
+            bd._detect_codex_oauth,
+            bd._detect_gemini,
+            _stub_ollama,
+        ),
+    )
+
+    options = detect_available_backends()
+    ids = [opt.id for opt in options]
+    assert ids == ["anthropic", "openai", "openai-codex", "gemini", "custom"]
+
+
+def test_aggregator_does_not_write_suggested_model_field(monkeypatch):
+    """Phase-2 deliberately drops the `suggested_model` field from
+    BackendOption — hardcoding model names goes stale.  This test pins
+    that contract so a future "while I'm here" edit doesn't reintroduce it."""
+    # Should not be present on the dataclass
+    assert "suggested_model" not in BackendOption.__dataclass_fields__
+
+
+# ─────────────────────────────────────────────────────────────────────
+# End-to-end: _maybe_setup_default_backend writes config.yaml
+# (advisor-mandated — Phase 1 had this same gap, mirror the fix)
+# ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def isolated_hermes_home(tmp_path, monkeypatch):
+    """Wire up Path.home(), HERMES_HOME, and cli._hermes_home so
+    save_config_value writes into our tmpdir, not the real ~/.hermes."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+    import cli as _cli_mod  # noqa: WPS433
+
+    monkeypatch.setattr(_cli_mod, "_hermes_home", hermes_home, raising=False)
+    yield hermes_home
+
+
+def test_anthropic_env_results_in_config_yaml_provider_anthropic(
+    isolated_hermes_home, monkeypatch
+):
+    """End-to-end: ANTHROPIC_API_KEY set → _maybe_setup_default_backend
+    writes config.yaml with model.provider='anthropic' and DOES NOT write
+    model.default (per the Phase-2 design — let runtime resolve the
+    current flagship)."""
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-real-key")
+
+    import hermes_cli.backend_discovery as bd
+
+    # Stub out Ollama to avoid network on systems where it's installed
+    monkeypatch.setattr(
+        bd,
+        "_DETECTORS",
+        (
+            bd._detect_anthropic,
+            bd._detect_openai,
+            bd._detect_codex_oauth,
+            bd._detect_gemini,
+            lambda: None,  # Ollama disabled
+        ),
+    )
+
+    # Force non-tty so picker auto-picks
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    from hermes_cli import main as main_mod
+
+    main_mod._maybe_setup_default_backend()
+
+    import yaml  # type: ignore[import-untyped]
+
+    cfg_path = isolated_hermes_home / "config.yaml"
+    assert cfg_path.exists()
+    cfg = yaml.safe_load(cfg_path.read_text())
+    assert cfg["model"]["provider"] == "anthropic"
+    # No model.default — defer to runtime get_default_model_for_provider
+    assert "default" not in cfg["model"], (
+        f"model.default should NOT be hardcoded: {cfg['model']!r}"
+    )
+
+
+def test_multi_backend_non_tty_auto_picks_top_priority(
+    isolated_hermes_home, monkeypatch
+):
+    """When 2+ backends available and stdin is non-tty (gateway, CI,
+    batch run), auto-pick the top-priority backend.  Anthropic > OpenAI
+    > Codex > Gemini > Ollama by detection order."""
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-real")
+
+    import hermes_cli.backend_discovery as bd
+
+    monkeypatch.setattr(
+        bd,
+        "_DETECTORS",
+        (
+            bd._detect_anthropic,
+            bd._detect_openai,
+            bd._detect_codex_oauth,
+            bd._detect_gemini,
+            lambda: None,
+        ),
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    from hermes_cli import main as main_mod
+
+    main_mod._maybe_setup_default_backend()
+
+    import yaml  # type: ignore[import-untyped]
+
+    cfg = yaml.safe_load((isolated_hermes_home / "config.yaml").read_text())
+    # OpenAI ranks above Gemini → it must win
+    assert cfg["model"]["provider"] == "openai"
+
+
+def test_no_backends_exits_with_korean_guide(
+    isolated_hermes_home, monkeypatch, capsys
+):
+    """0 backends → Korean guide listing all 5 setup options + exit(1)."""
+    _clear_env(monkeypatch)
+
+    import hermes_cli.backend_discovery as bd
+
+    monkeypatch.setattr(
+        bd,
+        "_DETECTORS",
+        (
+            bd._detect_anthropic,
+            bd._detect_openai,
+            bd._detect_codex_oauth,
+            bd._detect_gemini,
+            lambda: None,
+        ),
+    )
+
+    from hermes_cli import main as main_mod
+
+    with pytest.raises(SystemExit) as exc_info:
+        main_mod._maybe_setup_default_backend()
+    assert exc_info.value.code == 1
+
+    err = capsys.readouterr().err
+    # The 5 listed options must all appear (Korean labels)
+    for keyword in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "codex login", "GEMINI_API_KEY", "ollama"):
+        assert keyword in err, f"missing setup hint {keyword!r} in: {err!r}"
+
+
+def test_existing_config_provider_pinned_skips_discovery(
+    isolated_hermes_home, monkeypatch
+):
+    """If user has manually configured ``model.provider`` in config.yaml,
+    don't override on subsequent runs — they have made a choice.
+    """
+    _clear_env(monkeypatch)
+    # User has previously pinned anthropic
+    cfg_path = isolated_hermes_home / "config.yaml"
+    cfg_path.write_text("model:\n  provider: anthropic\n  default: claude-x\n")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-different-provider")
+
+    from hermes_cli import main as main_mod
+
+    main_mod._maybe_setup_default_backend()
+
+    # config.yaml unchanged
+    import yaml
+
+    cfg = yaml.safe_load(cfg_path.read_text())
+    assert cfg["model"]["provider"] == "anthropic"
+    assert cfg["model"]["default"] == "claude-x"
+
+
+def test_aggregator_swallows_detector_errors(monkeypatch):
+    """A detector that raises must not poison the whole list — Phase-2
+    discovery must stay resilient on weird PCs."""
+
+    def _boom():
+        raise RuntimeError("simulated PC oddity")
+
+    import hermes_cli.backend_discovery as bd
+
+    monkeypatch.setattr(bd, "_DETECTORS", (_boom, lambda: None))
+
+    # Should return empty list, not raise
+    assert detect_available_backends() == []
