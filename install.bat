@@ -120,6 +120,6 @@ echo.
 echo 사용법:
 echo   hermes.bat              대화 시작
 echo   hermes.bat init         프로젝트 컨텍스트 초기화
-echo   hermes.bat chat ^<폴더^>  특정 폴더를 컨텍스트로 대화 (예: hermes.bat chat src)
+echo   hermes.bat chat src     src 폴더를 컨텍스트로 대화 (폴더명은 자유)
 echo.
 pause
