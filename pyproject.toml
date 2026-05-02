@@ -174,4 +174,5 @@ not-iterable = "ignore"
 exclude = ["*"]
 
 [tool.uv]
-exclude-newer = "7 days"
+# (intentionally empty — `exclude-newer` requires an ISO date; "7 days"
+#  was a typo that triggered uv parse warnings on every install.bat run.)
