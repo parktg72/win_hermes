@@ -418,6 +418,248 @@ def test_existing_config_provider_pinned_skips_discovery(
     assert cfg["model"]["default"] == "claude-x"
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Stale-Ollama-pin migration (advisor-mandated narrow fix)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_is_stale_ollama_pin_detects_sub_64k_local(monkeypatch):
+    """Real user scenario: pre-Phase-1 win_hermes build wrote
+    ``gemma2:latest`` to config.yaml, that model has 8K context, and
+    the AIAgent would crash at init.  Our detector must say YES."""
+    from hermes_cli.main import _is_stale_ollama_pin
+
+    monkeypatch.setattr(
+        "agent.model_metadata.query_ollama_num_ctx",
+        lambda name, base_url, api_key="": 8_192,
+    )
+    assert _is_stale_ollama_pin(
+        {
+            "default": "gemma2:latest",
+            "provider": "custom",
+            "base_url": "http://127.0.0.1:11434/v1",
+        }
+    ) is True
+
+
+def test_is_stale_ollama_pin_respects_user_context_length_override(monkeypatch):
+    """If the user explicitly set ``model.context_length`` in config.yaml,
+    they knowingly accepted the small model — don't override."""
+    from hermes_cli.main import _is_stale_ollama_pin
+
+    monkeypatch.setattr(
+        "agent.model_metadata.query_ollama_num_ctx",
+        lambda *a, **kw: 8_192,
+    )
+    assert _is_stale_ollama_pin(
+        {
+            "default": "gemma2:latest",
+            "provider": "custom",
+            "base_url": "http://127.0.0.1:11434/v1",
+            "context_length": 8192,  # explicit override
+        }
+    ) is False
+
+
+def test_is_stale_ollama_pin_skips_non_custom_provider(monkeypatch):
+    """Anthropic / OpenAI / etc. pins must be left alone — even if the
+    model name happens to look small or the query function returns 0."""
+    from hermes_cli.main import _is_stale_ollama_pin
+
+    monkeypatch.setattr(
+        "agent.model_metadata.query_ollama_num_ctx",
+        lambda *a, **kw: 100,
+    )
+    assert _is_stale_ollama_pin(
+        {
+            "default": "claude-sonnet-4-6",
+            "provider": "anthropic",
+        }
+    ) is False
+
+
+def test_is_stale_ollama_pin_skips_remote_base_url(monkeypatch):
+    """A custom provider pointing at, e.g., a corporate vLLM behind
+    https://internal.corp/v1 is not Ollama — don't apply the migration."""
+    from hermes_cli.main import _is_stale_ollama_pin
+
+    monkeypatch.setattr(
+        "agent.model_metadata.query_ollama_num_ctx",
+        lambda *a, **kw: 8_192,
+    )
+    assert _is_stale_ollama_pin(
+        {
+            "default": "small-finetune",
+            "provider": "custom",
+            "base_url": "https://internal.corp/v1",
+        }
+    ) is False
+
+
+def test_is_stale_ollama_pin_silent_on_unknown_context(monkeypatch):
+    """``query_ollama_num_ctx`` returning None means we couldn't tell —
+    err on the side of respecting the existing pin (avoid disruption)."""
+    from hermes_cli.main import _is_stale_ollama_pin
+
+    monkeypatch.setattr(
+        "agent.model_metadata.query_ollama_num_ctx",
+        lambda *a, **kw: None,
+    )
+    assert _is_stale_ollama_pin(
+        {
+            "default": "mystery:tag",
+            "provider": "custom",
+            "base_url": "http://127.0.0.1:11434/v1",
+        }
+    ) is False
+
+
+def test_is_stale_ollama_pin_passes_through_64k_models(monkeypatch):
+    """A correctly-pinned 128K Ollama model (llama3.1:8b, gemma3:12b)
+    must NOT trigger re-run of the picker."""
+    from hermes_cli.main import _is_stale_ollama_pin
+
+    monkeypatch.setattr(
+        "agent.model_metadata.query_ollama_num_ctx",
+        lambda *a, **kw: 131_072,
+    )
+    assert _is_stale_ollama_pin(
+        {
+            "default": "llama3.1:8b",
+            "provider": "custom",
+            "base_url": "http://127.0.0.1:11434/v1",
+        }
+    ) is False
+
+
+def test_stale_pin_triggers_picker_with_korean_warning(
+    isolated_hermes_home, monkeypatch, capsys
+):
+    """End-to-end: ANTHROPIC_API_KEY set + stale gemma2 pinned in
+    config.yaml.  Detector fires → Korean warning to stderr → picker
+    runs → config.yaml gets 'anthropic' (or whatever's available)."""
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-key")
+
+    cfg_path = isolated_hermes_home / "config.yaml"
+    cfg_path.write_text(
+        "model:\n"
+        "  default: gemma2:latest\n"
+        "  provider: custom\n"
+        "  base_url: http://127.0.0.1:11434/v1\n"
+    )
+
+    monkeypatch.setattr(
+        "agent.model_metadata.query_ollama_num_ctx",
+        lambda *a, **kw: 8_192,
+    )
+
+    import hermes_cli.backend_discovery as bd
+
+    monkeypatch.setattr(
+        bd,
+        "_DETECTORS",
+        (
+            bd._detect_anthropic,
+            bd._detect_openai,
+            bd._detect_codex_oauth,
+            bd._detect_gemini,
+            lambda: None,
+        ),
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    from hermes_cli import main as main_mod
+
+    main_mod._maybe_setup_default_backend()
+
+    err = capsys.readouterr().err
+    assert "gemma2:latest" in err
+    assert "64K" in err
+
+    import yaml
+
+    cfg = yaml.safe_load(cfg_path.read_text())
+    assert cfg["model"]["provider"] == "anthropic", (
+        f"stale pin should have been replaced by anthropic: {cfg!r}"
+    )
+
+
+
+def test_stale_pin_user_actual_scenario_ollama_only(
+    isolated_hermes_home, monkeypatch, capsys
+):
+    """End-to-end mirror of the user's reported state on 2026-05-03:
+      - config.yaml: provider=custom, default=gemma2:latest, base_url=localhost
+      - Ollama running locally with both gemma2:latest (8K) and gemma3:12b (128K)
+      - No Anthropic / OpenAI / Gemini / Codex creds
+
+    After ``_maybe_setup_default_backend()`` returns, the user's stale
+    gemma2 pin must be replaced with a 128K model so AIAgent init no
+    longer hits the MINIMUM_CONTEXT_LENGTH guard.  The user's "save
+    file forever stuck on gemma2" loop is the bug we're closing.
+    """
+    import sys as _sys
+    from unittest.mock import AsyncMock, MagicMock
+
+    _clear_env(monkeypatch)
+    cfg_path = isolated_hermes_home / "config.yaml"
+    cfg_path.write_text(
+        "model:\n"
+        "  default: gemma2:latest\n"
+        "  provider: custom\n"
+        "  base_url: http://127.0.0.1:11434/v1\n"
+    )
+
+    # Ollama returns BOTH the stale model and a 128K replacement.
+    fake_ollama = MagicMock()
+    fake_ollama.fetch_ollama_models = AsyncMock(
+        return_value=["gemma2:latest", "gemma3:12b"]
+    )
+    from hermes_cli.providers.ollama_discovery import (
+        OllamaNotRunningError,
+        resolve_ollama_base_url,
+        select_model as real_select_model,
+    )
+
+    fake_ollama.select_model = real_select_model
+    fake_ollama.resolve_ollama_base_url = resolve_ollama_base_url
+    fake_ollama.OllamaNotRunningError = OllamaNotRunningError
+    monkeypatch.setitem(
+        _sys.modules,
+        "hermes_cli.providers.ollama_discovery",
+        fake_ollama,
+    )
+
+    # gemma2 → 8K (stale), gemma3:12b → 128K (compatible)
+    def _fake_ctx(name, base_url, api_key=""):
+        return {"gemma2:latest": 8_192, "gemma3:12b": 131_072}.get(name)
+
+    monkeypatch.setattr("agent.model_metadata.query_ollama_num_ctx", _fake_ctx)
+
+    # Force non-tty so the picker auto-picks the first compatible model.
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    from hermes_cli import main as main_mod
+
+    main_mod._maybe_setup_default_backend()
+
+    # 1. Korean warning printed
+    err = capsys.readouterr().err
+    assert "gemma2:latest" in err, f"warning missing stale model name: {err!r}"
+    assert "한 번만" in err, "Phase-1 promised the warning is one-time"
+
+    # 2. config.yaml's model.default is now the 128K replacement
+    import yaml
+
+    cfg = yaml.safe_load(cfg_path.read_text())
+    assert cfg["model"]["default"] == "gemma3:12b", (
+        f"stale gemma2 pin not replaced: {cfg['model']!r}"
+    )
+    assert cfg["model"]["provider"] == "custom"
+    assert "127.0.0.1" in cfg["model"]["base_url"]
+
+
 def test_aggregator_swallows_detector_errors(monkeypatch):
     """A detector that raises must not poison the whole list — Phase-2
     discovery must stay resilient on weird PCs."""

@@ -1289,6 +1289,50 @@ def _maybe_setup_ollama_model() -> None:
         pass
 
 
+def _is_stale_ollama_pin(model_cfg: dict) -> bool:
+    """Return True iff ``model_cfg`` pins a sub-64K Ollama model that
+    will trip ``run_agent.py`` 's ``MINIMUM_CONTEXT_LENGTH`` guard.
+
+    This catches the migration case where an older win_hermes build
+    (pre-Phase-1, before the picker had a 64K filter) wrote
+    ``gemma2:latest`` / ``phi-3`` / ``mistral:7b`` to ``config.yaml``.
+    The user can't easily recover from this on their own — the AIAgent
+    fails at init time, and Phase-2's "respect existing provider" skip
+    keeps the picker from re-running.
+
+    Detection is conservative — only when ALL of the following hold:
+      - ``model.provider == "custom"``
+      - ``model.base_url`` points at localhost / 127.0.0.1 (= Ollama)
+      - ``model.context_length`` is NOT explicitly set (an explicit
+        override means the user knowingly accepted a small model)
+      - ``model.default`` resolves to <64K via Ollama's /api/show
+    """
+    provider = (model_cfg.get("provider") or "").strip().lower()
+    if provider != "custom":
+        return False
+    base_url = (model_cfg.get("base_url") or "").strip()
+    if not any(host in base_url for host in ("127.0.0.1", "localhost", "[::1]")):
+        return False
+    if model_cfg.get("context_length"):
+        # User explicitly overrode — respect their choice.
+        return False
+    model_name = (model_cfg.get("default") or model_cfg.get("model") or "").strip()
+    if not model_name:
+        return False
+    try:
+        from agent.model_metadata import (
+            MINIMUM_CONTEXT_LENGTH,
+            query_ollama_num_ctx,
+        )
+
+        ctx = query_ollama_num_ctx(model_name, base_url)
+    except Exception:  # noqa: BLE001 — server down / parse error
+        return False
+    if ctx is None:
+        return False
+    return ctx < MINIMUM_CONTEXT_LENGTH
+
+
 def _maybe_setup_default_backend() -> None:
     """First-run dispatch: detect every available LLM backend and either
     auto-configure the only one or prompt the user (Korean) when several
@@ -1298,12 +1342,17 @@ def _maybe_setup_default_backend() -> None:
     Skips silently when:
       - ``HERMES_MODEL`` env is set (explicit user override)
       - ``~/.hermes/config.yaml`` already has a non-empty ``model.provider``
-        (the user has been here before and made a choice)
+        (the user has been here before and made a choice) — UNLESS that
+        pin is a sub-64K Ollama model written by a pre-Phase-1 build,
+        which would crash the AIAgent at init.  In that one case we
+        warn (Korean) and re-run the picker.
     """
     if os.environ.get("HERMES_MODEL"):
         return
 
-    # If config.yaml already pins a provider, respect it.
+    # If config.yaml already pins a provider, respect it — except for
+    # the stale-Ollama-pin migration case (pre-Phase-1 builds wrote
+    # sub-64K models like gemma2:latest, which now blocks AIAgent init).
     try:
         from hermes_cli.config import load_config
 
@@ -1312,7 +1361,31 @@ def _maybe_setup_default_backend() -> None:
         if isinstance(model_cfg, dict):
             existing = (model_cfg.get("provider") or "").strip()
             if existing:
-                return
+                if _is_stale_ollama_pin(model_cfg):
+                    # Show a one-time warning + clear the stale model.*
+                    # keys before re-running the picker.  Without the
+                    # clear, a user whose Ollama still has only sub-64K
+                    # models would see the warning forever (the picker
+                    # would raise before writing a new value, leaving
+                    # the stale pin for the next run).
+                    bad = model_cfg.get("default") or model_cfg.get("model") or "?"
+                    print(
+                        f"\n⚠ 이전에 선택한 Ollama 모델 '{bad}' 는 컨텍스트가\n"
+                        f"  64K 토큰 미만이라 hermes 가 시작되지 않습니다.\n"
+                        f"  새 모델을 선택해 주세요. (이 안내는 한 번만 나옵니다.)",
+                        file=sys.stderr,
+                    )
+                    try:
+                        from cli import save_config_value  # type: ignore[import-not-found]
+
+                        save_config_value("model.default", "")
+                        save_config_value("model.provider", "")
+                        save_config_value("model.base_url", "")
+                    except Exception:  # noqa: BLE001 — clearing is best-effort
+                        pass
+                    # Fall through to backend discovery / picker.
+                else:
+                    return
     except Exception:  # noqa: BLE001 — config load failure → fall through
         pass
 
