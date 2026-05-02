@@ -121,7 +121,7 @@ def _apply_profile_override() -> None:
 
             active_path = get_default_hermes_root() / "active_profile"
             if active_path.exists():
-                name = active_path.read_text().strip()
+                name = active_path.read_text(encoding="utf-8").strip()
                 if name and name != "default":
                     profile_name = name
                     consume = 0  # don't strip anything from argv
@@ -283,7 +283,7 @@ def _has_any_provider_configured() -> bool:
     env_file = get_env_path()
     if env_file.exists():
         try:
-            for line in env_file.read_text().splitlines():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line.startswith("#") or "=" not in line:
                     continue
@@ -311,7 +311,7 @@ def _has_any_provider_configured() -> bool:
         try:
             import json
 
-            auth = json.loads(auth_file.read_text())
+            auth = json.loads(auth_file.read_text(encoding="utf-8"))
             active = auth.get("active_provider")
             if active:
                 status = get_auth_status(active)
@@ -1171,7 +1171,7 @@ def _maybe_setup_ollama_model() -> None:
     if os.environ.get("HERMES_MODEL"):
         return
 
-    config_path = Path.home() / ".hermes" / "config.json"
+    config_path = get_hermes_home() / "config.json"
     saved_model: str | None = None
     if config_path.exists():
         try:
@@ -1196,15 +1196,20 @@ def _maybe_setup_ollama_model() -> None:
         return ",".join(parts)
 
     try:
-        models = asyncio.run(fetch_ollama_models())
-        chosen = select_model(models, saved=saved_model)
-
         # Honor OLLAMA_HOST env (user bound Ollama to custom port).
         # resolve_ollama_base_url returns canonical "http://host:port"
         # without trailing /v1 — append the OpenAI-compat suffix.
         from hermes_cli.providers.ollama_discovery import resolve_ollama_base_url
 
         base_url = f"{resolve_ollama_base_url(_OLLAMA_DEFAULT_BASE)}/v1"
+
+        models = asyncio.run(fetch_ollama_models())
+        # Pass base_url so select_model filters out models below the
+        # 64K minimum context length that run_agent.py:1975 requires
+        # (otherwise users hit "Failed to initialize agent: ... below
+        # the minimum 64,000 required" after picking gemma2 / phi-3 /
+        # mistral-7b-base).
+        chosen = select_model(models, saved=saved_model, base_url=base_url)
 
         # save_config_value() in cli.py picks user vs. project config based
         # on whether ~/.hermes/config.yaml *exists*.  On first run it
@@ -5240,7 +5245,7 @@ def _gateway_prompt(prompt_text: str, default: str = "", timeout: float = 300.0)
         "id": str(_uuid.uuid4()),
     }
     tmp = prompt_path.with_suffix(".tmp")
-    tmp.write_text(_json.dumps(payload))
+    tmp.write_text(_json.dumps(payload), encoding="utf-8")
     tmp.replace(prompt_path)
 
     # Poll for response
@@ -5248,7 +5253,7 @@ def _gateway_prompt(prompt_text: str, default: str = "", timeout: float = 300.0)
     while _time.monotonic() < deadline:
         if response_path.exists():
             try:
-                answer = response_path.read_text().strip()
+                answer = response_path.read_text(encoding="utf-8").strip()
                 response_path.unlink(missing_ok=True)
                 prompt_path.unlink(missing_ok=True)
                 return answer if answer else default
@@ -7062,7 +7067,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
         if gateway_mode:
             _exit_code_path = get_hermes_home() / ".update_exit_code"
             try:
-                _exit_code_path.write_text("0")
+                _exit_code_path.write_text("0", encoding="utf-8")
             except OSError:
                 pass
 

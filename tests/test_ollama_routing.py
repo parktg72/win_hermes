@@ -39,8 +39,12 @@ def test_setup_writes_config_yaml_with_custom_provider(tmp_path, monkeypatch):
     """
     main_mod = _import_main()
 
-    # Isolate ~/.hermes
+    # Isolate ~/.hermes — both Path.home() (legacy callsites) and
+    # HERMES_HOME (canonical, conftest defaults to a different tmp path).
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     # Clear env state that would short-circuit the function or leak into
     # the assertions
