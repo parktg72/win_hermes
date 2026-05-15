@@ -30,6 +30,12 @@ VENV=""
 for candidate in "$REPO_ROOT/.venv" "$REPO_ROOT/venv" "$HOME/.hermes/hermes-agent/venv"; do
   if [ -f "$candidate/bin/activate" ]; then
     VENV="$candidate"
+    PYTHON="$candidate/bin/python"
+    break
+  fi
+  if [ -f "$candidate/Scripts/activate" ]; then
+    VENV="$candidate"
+    PYTHON="$candidate/Scripts/python.exe"
     break
   fi
 done
@@ -38,8 +44,6 @@ if [ -z "$VENV" ]; then
   echo "error: no virtualenv found in $REPO_ROOT/.venv or $REPO_ROOT/venv" >&2
   exit 1
 fi
-
-PYTHON="$VENV/bin/python"
 
 # ── Ensure pytest-split is installed (required for shard-equivalent runs) ──
 if ! "$PYTHON" -c "import pytest_split" 2>/dev/null; then

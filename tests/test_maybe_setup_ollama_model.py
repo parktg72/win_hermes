@@ -52,7 +52,8 @@ def test_exits_with_korean_stderr_when_ollama_not_running(
 
 def test_persists_first_model_when_no_saved(monkeypatch, tmp_path):
     monkeypatch.delenv("HERMES_MODEL", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    hermes_home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     from hermes_cli.main import _maybe_setup_ollama_model
 
     mock_fetch = AsyncMock(return_value=["llama3.2:latest", "mistral:7b"])
@@ -62,7 +63,7 @@ def test_persists_first_model_when_no_saved(monkeypatch, tmp_path):
     ):
         _maybe_setup_ollama_model()
 
-    config = tmp_path / ".hermes" / "config.json"
+    config = hermes_home / "config.json"
     assert config.exists(), "config.json not written"
     saved = json.loads(config.read_text(encoding="utf-8"))
     assert saved["ollama_model"] == "llama3.2:latest"
@@ -71,8 +72,8 @@ def test_persists_first_model_when_no_saved(monkeypatch, tmp_path):
 
 def test_uses_saved_model_when_still_available(monkeypatch, tmp_path):
     monkeypatch.delenv("HERMES_MODEL", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
     cfg_dir = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(cfg_dir))
     cfg_dir.mkdir()
     (cfg_dir / "config.json").write_text(
         json.dumps({"ollama_model": "mistral:7b"}), encoding="utf-8"
@@ -88,6 +89,33 @@ def test_uses_saved_model_when_still_available(monkeypatch, tmp_path):
         _maybe_setup_ollama_model()
 
     assert os.environ.get("HERMES_MODEL") == "ollama/mistral:7b"
+
+
+def test_exits_with_specific_korean_stderr_when_models_below_context_minimum(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.delenv("HERMES_MODEL", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    from hermes_cli.main import _maybe_setup_ollama_model
+
+    mock_fetch = AsyncMock(return_value=["gemma2:latest", "phi3:latest"])
+
+    def _ctx(name, base_url, api_key=""):
+        return {"gemma2:latest": 8_192, "phi3:latest": 4_096}.get(name)
+
+    with patch(
+        "hermes_cli.providers.ollama_discovery.fetch_ollama_models",
+        new=mock_fetch,
+    ), patch("agent.model_metadata.query_ollama_num_ctx", side_effect=_ctx):
+        with pytest.raises(SystemExit) as excinfo:
+            _maybe_setup_ollama_model()
+        assert excinfo.value.code == 1
+
+    captured = capsys.readouterr()
+    assert "gemma2:latest" in captured.err
+    assert "8,192" in captured.err
+    assert "64,000" in captured.err
+    assert "ollama pull" in captured.err
 
 
 def test_exits_with_korean_stderr_when_no_models(monkeypatch, tmp_path, capsys):

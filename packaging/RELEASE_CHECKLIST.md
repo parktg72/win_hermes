@@ -60,7 +60,7 @@ file install.bat hermes.bat
 
 CRLF가 아닐 경우 (macOS에서 새로 만든 직후 등):
 ```bash
-python -c "f='install.bat'; open(f,'wb').write(open(f,'rb').read().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'))"
+python -c "from pathlib import Path; p=Path('install.bat'); data=p.read_bytes(); p.write_bytes(data.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))"
 ```
 hermes.bat에도 동일 적용.
 
@@ -90,38 +90,24 @@ uv run pytest tests/ -q
 | `README.md`, `README-KO.md`, `CLAUDE.md`, `LICENSE` | 기타 사내 비공개 자료 |
 | `scripts/download_uv.py`, `scripts/download_wheels.py` (재배포 시 참고용) | |
 
-빌드 명령 예시 (macOS):
+빌드 명령:
 
 ```bash
 VERSION=v0.11.0-win.1
-PREFIX=win_hermes-${VERSION}
-ZIP=/tmp/${PREFIX}.zip
-
-# 1) 스테이징 디렉터리에 git tracked 파일 + vendor/ 를 한 트리로 모은다.
-#    이렇게 해야 install.bat과 vendor/ 가 같은 prefix 아래 들어가서
-#    압축 해제 후 install.bat이 %~dp0vendor\uv.exe 를 찾을 수 있다.
-STAGE=$(mktemp -d)
-git archive HEAD | tar -x -C "${STAGE}/"
-mkdir -p "${STAGE}/vendor"
-cp vendor/uv.exe "${STAGE}/vendor/uv.exe"
-cp -R vendor/wheels "${STAGE}/vendor/wheels"
-
-# 2) prefix 디렉터리로 묶고 zip
-mv "${STAGE}" "/tmp/${PREFIX}"
-( cd /tmp && zip -r "${ZIP}" "${PREFIX}" -x "*.pyc" "*/__pycache__/*" )
-rm -rf "/tmp/${PREFIX}"
+python scripts/build_windows_release.py --version "${VERSION}" --output dist
 ```
 
 확인:
 
-- [ ] `unzip -l ${ZIP} | grep -c "${PREFIX}/.*\.whl$"` 가 휠 개수와 일치
-- [ ] `unzip -l ${ZIP} | grep -E "${PREFIX}/(install|hermes|download_wheels)\.bat$"` 세 줄 출력
-- [ ] `unzip -l ${ZIP} | grep "${PREFIX}/vendor/uv\.exe$"` 1줄 출력
-- [ ] `unzip -l ${ZIP} | head -3` — 모든 항목이 `${PREFIX}/` 하위에 있는지 확인 (orphan 파일 없음)
+- [ ] `python scripts/build_windows_release.py --check-only` 통과
+- [ ] `unzip -l dist/win_hermes-${VERSION}.zip | grep -c "win_hermes-${VERSION}/.*\.whl$"` 가 휠 개수와 일치
+- [ ] `unzip -l dist/win_hermes-${VERSION}.zip | grep -E "win_hermes-${VERSION}/(install|hermes|download_wheels)\.bat$"` 세 줄 출력
+- [ ] `unzip -l dist/win_hermes-${VERSION}.zip | grep "win_hermes-${VERSION}/vendor/uv\.exe$"` 1줄 출력
+- [ ] `unzip -l dist/win_hermes-${VERSION}.zip | head -3` — 모든 항목이 `win_hermes-${VERSION}/` 하위에 있는지 확인 (orphan 파일 없음)
 - [ ] zip 크기가 비정상적으로 크지 않음 (대략 ~150~300MB 예상)
 
 > ⚠️ 과거 `git archive --prefix=` + `zip vendor/...` 조합은 vendor/ 만 zip 루트에 떨어져
-> install.bat이 `%~dp0vendor\uv.exe` 를 못 찾는 회귀를 만들었다. 위 staging 방식으로
+> install.bat이 `%~dp0vendor\uv.exe` 를 못 찾는 회귀를 만들었다. `scripts/build_windows_release.py`로
 > install.bat과 vendor/ 가 같은 `${PREFIX}/` 트리에 들어가도록 보장한다.
 
 ---

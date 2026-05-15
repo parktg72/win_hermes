@@ -1274,16 +1274,20 @@ def _maybe_setup_ollama_model() -> None:
     except OllamaNotRunningError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
-    except ValueError:
-        # glm-5.1 한국어 검수 — 비개발자 위해 구체적 모델명 예시 제시
-        print(
-            "Ollama에 사용할 수 있는 모델이 아직 설치되어 있지 않습니다.\n"
-            "터미널에서 다음 명령으로 모델을 내려받으세요:\n"
-            "  ollama pull llama3.1:8b      # 영문/한글 둘 다 가능, 약 5GB\n"
-            "  ollama pull gemma3:12b        # 한국어 강함, 약 8GB\n"
-            "그런 다음 hermes 를 다시 실행하세요.",
-            file=sys.stderr,
-        )
+    except ValueError as exc:
+        msg = str(exc)
+        if msg and not msg.startswith("No models found"):
+            print(msg, file=sys.stderr)
+        else:
+            # glm-5.1 한국어 검수 — 비개발자 위해 구체적 모델명 예시 제시
+            print(
+                "Ollama에 사용할 수 있는 모델이 아직 설치되어 있지 않습니다.\n"
+                "터미널에서 다음 명령으로 모델을 내려받으세요:\n"
+                "  ollama pull llama3.1:8b      # 영문/한글 둘 다 가능, 약 5GB\n"
+                "  ollama pull gemma3:12b        # 한국어 강함, 약 8GB\n"
+                "그런 다음 hermes 를 다시 실행하세요.",
+                file=sys.stderr,
+            )
         sys.exit(1)
     except OSError:
         pass

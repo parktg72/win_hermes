@@ -1,0 +1,88 @@
+name: Windows Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'install.bat'
+      - 'hermes.bat'
+      - 'download_wheels.bat'
+      - 'scripts/**'
+      - 'hermes_cli/**'
+      - 'tests/test_windows*.py'
+      - 'tests/test_maybe_setup_ollama_model.py'
+      - 'tests/test_ollama*.py'
+      - '.github/workflows/windows-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'install.bat'
+      - 'hermes.bat'
+      - 'download_wheels.bat'
+      - 'scripts/**'
+      - 'hermes_cli/**'
+      - 'tests/test_windows*.py'
+      - 'tests/test_maybe_setup_ollama_model.py'
+      - 'tests/test_ollama*.py'
+      - '.github/workflows/windows-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.12'
+
+      - name: Create virtualenv
+        run: |
+          uv venv .venv --python 3.12
+          .venv/Scripts/python.exe -m pip install -e ".[dev,windows]"
+
+      - name: Check CRLF scripts
+        run: |
+          .venv/Scripts/python.exe - <<'PY'
+          from pathlib import Path
+          for name in ("install.bat", "hermes.bat", "download_wheels.bat"):
+              data = Path(name).read_bytes()
+              if b"\r\n" not in data or b"\n" in data.replace(b"\r\n", b""):
+                  raise SystemExit(f"{name} must use CRLF line endings")
+          PY
+
+      - name: Validate release tree without vendor artifacts
+        run: |
+          mkdir -p vendor/wheels
+          printf 'uv' > vendor/uv.exe
+          printf 'wheel' > vendor/wheels/setuptools-1-py3-none-any.whl
+          .venv/Scripts/python.exe scripts/build_windows_release.py --check-only
+
+      - name: Run Windows release smoke tests
+        run: |
+          bash scripts/run_tests.sh \
+            tests/test_windows.py \
+            tests/test_main_guard.py \
+            tests/test_maybe_setup_ollama_model.py \
+            tests/test_ollama_discovery.py \
+            tests/test_ollama_picker_context_guard.py \
+            tests/test_download_uv.py \
+            tests/test_gitattributes.py \
+            tests/test_windows_release_builder.py
