@@ -80,9 +80,7 @@ jobs:
           bash scripts/run_tests.sh \
             tests/test_windows.py \
             tests/test_main_guard.py \
-            tests/test_maybe_setup_ollama_model.py \
-            tests/test_ollama_discovery.py \
-            tests/test_ollama_picker_context_guard.py \
             tests/test_download_uv.py \
             tests/test_gitattributes.py \
-            tests/test_windows_release_builder.py
+            tests/test_windows_release_builder.py \
+            tests/test_windows_release_workflows.py

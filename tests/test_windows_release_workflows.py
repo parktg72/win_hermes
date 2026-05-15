@@ -19,3 +19,6 @@ def test_windows_smoke_workflow_exists_and_checks_release_builder():
     assert "python -m venv .venv" in body
     assert "scripts/build_windows_release.py --check-only" in body
     assert "tests/test_windows_release_builder.py" in body
+    assert "tests/test_windows_release_workflows.py" in body
+    smoke_command = body.split("Run Windows release smoke tests", maxsplit=1)[1]
+    assert "tests/test_ollama" not in smoke_command
