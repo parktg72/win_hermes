@@ -83,10 +83,28 @@ jobs:
             tests/test_windows.py \
             tests/test_main_guard.py
 
-      - name: Run Windows download artifact tests
+      - name: Run Windows uv helper tests
         run: |
           bash scripts/run_tests.sh \
-            tests/test_download_uv.py
+            tests/test_download_uv.py::test_script_imports_cleanly \
+            tests/test_download_uv.py::test_default_uv_version_looks_like_semver \
+            tests/test_download_uv.py::test_target_path_under_vendor \
+            tests/test_download_uv.py::test_zip_url_points_at_official_release \
+            tests/test_download_uv.py::test_sha256_parser_accepts_two_column_form \
+            tests/test_download_uv.py::test_sha256_parser_accepts_bare_hash_line \
+            tests/test_download_uv.py::test_sha256_parser_rejects_garbage
+
+      - name: Run Windows artifact metadata tests
+        run: |
+          bash scripts/run_tests.sh \
+            tests/test_download_uv.py::test_gitignore_excludes_uv_artifacts \
+            tests/test_download_uv.py::test_download_wheels_includes_build_backend
+
+      - name: Run Windows batch artifact tests
+        run: |
+          bash scripts/run_tests.sh \
+            tests/test_download_uv.py::test_download_wheels_bat_invokes_download_uv \
+            tests/test_download_uv.py::test_install_bat_uses_offline_build_backend_before_editable_install
 
       - name: Run Windows EOL rule tests
         run: |
