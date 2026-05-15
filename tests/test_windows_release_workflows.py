@@ -16,6 +16,7 @@ def test_windows_smoke_workflow_exists_and_checks_release_builder():
     body = workflow.read_text()
     assert "windows-latest" in body
     assert "python-version: '3.12'" in body
+    assert "pyproject.toml" in body
     assert "python -m venv .venv" in body
     assert "scripts/build_windows_release.py --check-only" in body
     assert "tests/test_windows_release_builder.py" in body
