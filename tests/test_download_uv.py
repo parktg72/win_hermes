@@ -71,7 +71,7 @@ def test_sha256_parser_rejects_garbage():
 
 
 def test_gitignore_excludes_uv_artifacts():
-    body = (REPO_ROOT / ".gitignore").read_text()
+    body = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
     for entry in ("vendor/uv.exe", "vendor/uv.exe.sha256", "vendor/wheels/"):
         assert entry in body, f"missing {entry} in .gitignore"
 
@@ -87,7 +87,7 @@ def test_download_wheels_bat_invokes_download_uv():
 
 
 def test_download_wheels_includes_build_backend():
-    script = (REPO_ROOT / "scripts" / "download_wheels.py").read_text()
+    script = (REPO_ROOT / "scripts" / "download_wheels.py").read_text(encoding="utf-8")
     assert "setuptools>=61.0" in script
     assert '"setuptools"' in script
 
