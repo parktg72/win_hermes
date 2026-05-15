@@ -83,11 +83,19 @@ jobs:
             tests/test_windows.py \
             tests/test_main_guard.py
 
-      - name: Run Windows artifact smoke tests
+      - name: Run Windows download artifact tests
         run: |
           bash scripts/run_tests.sh \
-            tests/test_download_uv.py \
-            tests/test_gitattributes.py \
+            tests/test_download_uv.py
+
+      - name: Run Windows EOL rule tests
+        run: |
+          bash scripts/run_tests.sh \
+            tests/test_gitattributes.py
+
+      - name: Run Windows release builder tests
+        run: |
+          bash scripts/run_tests.sh \
             tests/test_windows_release_builder.py
 
       - name: Run Windows workflow smoke tests
