@@ -62,7 +62,7 @@ def test_validate_release_tree_accepts_required_artifacts(tmp_path):
 def test_validate_release_tree_rejects_lf_bat(tmp_path):
     mod = _load()
     root = _make_release_tree(tmp_path)
-    (root / "install.bat").write_text("@echo off\n", encoding="utf-8")
+    (root / "install.bat").write_bytes(b"@echo off\n")
 
     result = mod.validate_release_tree(root)
 
