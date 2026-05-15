@@ -94,10 +94,14 @@ jobs:
             tests/test_download_uv.py::test_sha256_parser_accepts_bare_hash_line \
             tests/test_download_uv.py::test_sha256_parser_rejects_garbage
 
-      - name: Run Windows artifact metadata tests
+      - name: Run Windows artifact gitignore tests
         run: |
           bash scripts/run_tests.sh \
-            tests/test_download_uv.py::test_gitignore_excludes_uv_artifacts \
+            tests/test_download_uv.py::test_gitignore_excludes_uv_artifacts
+
+      - name: Run Windows wheel metadata tests
+        run: |
+          bash scripts/run_tests.sh \
             tests/test_download_uv.py::test_download_wheels_includes_build_backend
 
       - name: Run Windows batch artifact tests
