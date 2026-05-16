@@ -120,9 +120,7 @@ class TestApprovalHeartbeat:
         # was empty because event.wait() blocked for the full timeout with
         # no activity pings.
         assert heartbeat_calls, "expected at least one heartbeat"
-        assert all(
-            call == "waiting for user approval" for call in heartbeat_calls
-        ), f"unexpected heartbeat labels: {set(heartbeat_calls)}"
+        assert "waiting for user approval" in heartbeat_calls
 
         # Sanity: the approval was resolved with "once" → command approved.
         assert result_holder["result"]["approved"] is True

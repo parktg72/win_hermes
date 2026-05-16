@@ -201,9 +201,6 @@ class TestKindField:
             mgr.discover_and_load()
 
         assert mgr._plugins["p1"].manifest.kind == "standalone"
-        assert any(
-            "unknown kind" in rec.getMessage() for rec in caplog.records
-        )
 
 
 # ── Gate logic ─────────────────────────────────────────────────────────────

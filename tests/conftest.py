@@ -20,6 +20,7 @@ test runner at ``scripts/run_tests.sh``.
 """
 
 import asyncio
+import copy
 import os
 import re
 import signal
@@ -180,10 +181,14 @@ _HERMES_BEHAVIORAL_VARS = frozenset({
     "HERMES_CONTAINER",
     "HERMES_EPHEMERAL_SYSTEM_PROMPT",
     "HERMES_TIMEZONE",
+    "HERMES_TUI_MODEL",
+    "HERMES_TUI_PROVIDER",
     "HERMES_REDACT_SECRETS",
     "HERMES_BACKGROUND_NOTIFICATIONS",
     "HERMES_EXEC_ASK",
     "HERMES_HOME_MODE",
+    "HERMES_RESTART_DRAIN_TIMEOUT",
+    "TERMINAL_CWD",
     "BROWSER_CDP_URL",
     "CAMOFOX_URL",
     # Platform allowlists — not credentials, but if set from any source
@@ -397,6 +402,40 @@ def _reset_module_state():
             _ft_mod._read_tracker.clear()
         with _ft_mod._file_ops_lock:
             _ft_mod._file_ops_cache.clear()
+    except Exception:
+        pass
+
+    # --- tools.terminal_tool — live env cwd can otherwise override
+    # TERMINAL_CWD in file path resolution tests on the same worker.
+    try:
+        from tools import terminal_tool as _term_mod
+        with _term_mod._env_lock:
+            _term_mod._active_environments.clear()
+    except Exception:
+        pass
+
+    # --- hermes_cli.config — per-path config caches can outlive monkeypatches
+    # to get_config_path()/HERMES_HOME within an xdist worker.
+    try:
+        from hermes_cli import config as _cfg_mod
+        if not hasattr(_cfg_mod, "_TEST_DEFAULT_CONFIG_BASELINE"):
+            _cfg_mod._TEST_DEFAULT_CONFIG_BASELINE = copy.deepcopy(_cfg_mod.DEFAULT_CONFIG)
+        else:
+            _cfg_mod.DEFAULT_CONFIG.clear()
+            _cfg_mod.DEFAULT_CONFIG.update(
+                copy.deepcopy(_cfg_mod._TEST_DEFAULT_CONFIG_BASELINE)
+            )
+        _cfg_mod._LOAD_CONFIG_CACHE.clear()
+        _cfg_mod._RAW_CONFIG_CACHE.clear()
+        _cfg_mod._LAST_EXPANDED_CONFIG_BY_PATH.clear()
+    except Exception:
+        pass
+
+    # --- hermes_constants — environment probes are cached process-wide.
+    try:
+        import hermes_constants as _hc_mod
+        _hc_mod._wsl_detected = None
+        _hc_mod._container_detected = None
     except Exception:
         pass
 

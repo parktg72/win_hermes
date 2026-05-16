@@ -127,7 +127,10 @@ class TestCompactBannerSkinIntegration:
         set_active_skin("default")
 
         with patch("cli.shutil.get_terminal_size", return_value=SimpleNamespace(columns=90)), \
-             patch("cli.format_banner_version_label", return_value="Hermes Agent v1.0 (test) · upstream abc12345"):
+             patch.dict(
+                 _build_compact_banner.__globals__,
+                 {"format_banner_version_label": lambda: "Hermes Agent v1.0 (test) · upstream abc12345"},
+             ):
             banner = _build_compact_banner()
 
         assert "upstream abc12345" in banner

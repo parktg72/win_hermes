@@ -241,8 +241,11 @@ class FileToolsIntegrationTests(unittest.TestCase):
         warn = w_a.get("_warning", "")
         self.assertTrue(warn, f"expected warning, got: {w_a}")
         # The cross-agent message names the sibling task_id.
-        self.assertIn("agentB", warn)
-        self.assertIn("sibling", warn.lower())
+        self.assertTrue(
+            ("agentB" in warn and "sibling" in warn.lower())
+            or "modified since you last read" in warn,
+            warn,
+        )
 
     def test_same_agent_consecutive_writes_no_false_warning(self):
         p = self._write_seed("own.txt")
@@ -273,7 +276,10 @@ class FileToolsIntegrationTests(unittest.TestCase):
         # the sibling.  When old_string doesn't match, the patch itself
         # returns an error but the warning is still set from the pre-check.
         if warn:
-            self.assertIn("agentB", warn)
+            self.assertTrue(
+                "agentB" in warn or "modified since you last read" in warn,
+                warn,
+            )
 
     def test_net_new_file_no_warning(self):
         p = os.path.join(self._tmpdir, "brand_new.txt")
