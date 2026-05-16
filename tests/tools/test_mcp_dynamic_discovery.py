@@ -94,6 +94,7 @@ class TestMessageHandler:
                 root=ToolListChangedNotification(method="notifications/tools/list_changed")
             )
             await handler(notification)
+            await asyncio.gather(*server._pending_refresh_tasks)
             mock_refresh.assert_awaited_once()
 
     @pytest.mark.asyncio

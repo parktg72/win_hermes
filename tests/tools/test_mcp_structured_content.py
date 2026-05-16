@@ -129,3 +129,74 @@ class TestStructuredContentPreservation:
         raw = handler({})
         data = json.loads(raw)
         assert data["result"] == payload
+
+
+class TestLegacyServerLockFallback:
+    """Resource/prompt handlers tolerate legacy test doubles without _rpc_lock."""
+
+    @pytest.fixture
+    def _legacy_server(self):
+        fake_session = MagicMock()
+        fake_server = SimpleNamespace(session=fake_session)
+        with patch.dict(mcp_tool._servers, {"legacy-server": fake_server}), \
+             patch("tools.mcp_tool._run_on_mcp_loop", side_effect=_fake_run_on_mcp_loop):
+            yield fake_session
+
+    def test_list_resources_without_rpc_lock(self, _legacy_server):
+        _legacy_server.list_resources = AsyncMock(
+            return_value=SimpleNamespace(
+                resources=[
+                    SimpleNamespace(
+                        uri="file:///tmp/example.txt",
+                        name="example",
+                        description="demo",
+                        mimeType="text/plain",
+                    )
+                ]
+            )
+        )
+        handler = mcp_tool._make_list_resources_handler("legacy-server", 30.0)
+        data = json.loads(handler({}))
+        assert data["resources"][0]["uri"] == "file:///tmp/example.txt"
+        _legacy_server.list_resources.assert_awaited_once()
+
+    def test_read_resource_without_rpc_lock(self, _legacy_server):
+        _legacy_server.read_resource = AsyncMock(
+            return_value=SimpleNamespace(
+                contents=[SimpleNamespace(text="resource body")]
+            )
+        )
+        handler = mcp_tool._make_read_resource_handler("legacy-server", 30.0)
+        data = json.loads(handler({"uri": "file:///tmp/example.txt"}))
+        assert data == {"result": "resource body"}
+        _legacy_server.read_resource.assert_awaited_once_with("file:///tmp/example.txt")
+
+    def test_list_prompts_without_rpc_lock(self, _legacy_server):
+        _legacy_server.list_prompts = AsyncMock(
+            return_value=SimpleNamespace(
+                prompts=[
+                    SimpleNamespace(name="summarize", description="Summarize text", arguments=[])
+                ]
+            )
+        )
+        handler = mcp_tool._make_list_prompts_handler("legacy-server", 30.0)
+        data = json.loads(handler({}))
+        assert data["prompts"][0]["name"] == "summarize"
+        _legacy_server.list_prompts.assert_awaited_once()
+
+    def test_get_prompt_without_rpc_lock(self, _legacy_server):
+        _legacy_server.get_prompt = AsyncMock(
+            return_value=SimpleNamespace(
+                messages=[
+                    SimpleNamespace(role="user", content=SimpleNamespace(text="hello"))
+                ],
+                description="Greeting",
+            )
+        )
+        handler = mcp_tool._make_get_prompt_handler("legacy-server", 30.0)
+        data = json.loads(handler({"name": "greet", "arguments": {"name": "Ada"}}))
+        assert data["messages"] == [{"role": "user", "content": "hello"}]
+        assert data["description"] == "Greeting"
+        _legacy_server.get_prompt.assert_awaited_once_with(
+            "greet", arguments={"name": "Ada"}
+        )
