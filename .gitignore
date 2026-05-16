@@ -71,9 +71,8 @@ result
 website/static/api/skills-index.json
 models-dev-upstream/
 
-# Offline Windows wheel cache and binary
+# Offline Windows wheel cache
 vendor/wheels/
-vendor/uv.exe
 vendor/uv.exe.sha256
 
 # Claude Code per-user permission/settings files (machine-local, never share)

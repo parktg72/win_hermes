@@ -1,5 +1,6 @@
 # Auto-generated files — collapse diffs and exclude from language stats
 web/package-lock.json linguist-generated=true
+vendor/uv.exe binary linguist-vendored=true
 
 # Enforce CRLF line endings on Windows scripts
 *.bat  text eol=crlf

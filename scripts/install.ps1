@@ -82,9 +82,15 @@ function Install-Uv {
     
     # Check common install locations
     $uvPaths = @(
+        "$env:LOCALAPPDATA\uv\bin\uv.exe",
+        "$env:APPDATA\uv\bin\uv.exe",
         "$env:USERPROFILE\.local\bin\uv.exe",
         "$env:USERPROFILE\.cargo\bin\uv.exe"
     )
+    if ($PSScriptRoot) {
+        $repoRoot = Split-Path -Parent $PSScriptRoot
+        $uvPaths += (Join-Path $repoRoot "vendor\uv.exe")
+    }
     foreach ($uvPath in $uvPaths) {
         if (Test-Path $uvPath) {
             $script:UvCmd = $uvPath
@@ -100,11 +106,14 @@ function Install-Uv {
         powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex" 2>&1 | Out-Null
         
         # Find the installed binary
-        $uvExe = "$env:USERPROFILE\.local\bin\uv.exe"
-        if (-not (Test-Path $uvExe)) {
-            $uvExe = "$env:USERPROFILE\.cargo\bin\uv.exe"
+        $uvExe = $null
+        foreach ($uvPath in $uvPaths) {
+            if (Test-Path $uvPath) {
+                $uvExe = $uvPath
+                break
+            }
         }
-        if (-not (Test-Path $uvExe)) {
+        if (-not $uvExe) {
             # Refresh PATH and try again
             $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
             if (Get-Command uv -ErrorAction SilentlyContinue) {
@@ -112,7 +121,7 @@ function Install-Uv {
             }
         }
         
-        if (Test-Path $uvExe) {
+        if ($uvExe -and (Test-Path $uvExe)) {
             $script:UvCmd = $uvExe
             $version = & $uvExe --version
             Write-Success "uv installed ($version)"
