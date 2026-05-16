@@ -8785,8 +8785,29 @@ class GatewayRunner:
     async def _run_in_executor_with_context(self, func, *args):
         """Run blocking work in the thread pool while preserving session contextvars."""
         loop = asyncio.get_running_loop()
+        future = loop.create_future()
         ctx = copy_context()
-        return await loop.run_in_executor(None, ctx.run, func, *args)
+
+        def _set_result(result):
+            if not future.cancelled():
+                future.set_result(result)
+
+        def _set_exception(exc):
+            if not future.cancelled():
+                future.set_exception(exc)
+
+        def _runner():
+            try:
+                result = ctx.run(func, *args)
+            except BaseException as exc:  # pragma: no cover - re-raised on loop
+                loop.call_soon_threadsafe(_set_exception, exc)
+            else:
+                loop.call_soon_threadsafe(_set_result, result)
+
+        threading.Thread(target=_runner, name="gateway-agent", daemon=True).start()
+        while not future.done():
+            await asyncio.sleep(0.05)
+        return future.result()
 
     def _decide_image_input_mode(self) -> str:
         """Resolve the image-input routing for the currently active model.

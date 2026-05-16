@@ -6,8 +6,8 @@ import asyncio
 import contextvars
 import logging
 import os
+import threading
 from collections import defaultdict, deque
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Deque, Optional
 
 import acp
@@ -70,13 +70,42 @@ try:
 except Exception:
     HERMES_VERSION = "0.0.0"
 
-# Thread pool for running AIAgent (synchronous) in parallel.
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acp-agent")
-
 # Server-side page size for list_sessions. The ACP ListSessionsRequest schema
 # does not expose a client-side limit, so this is a fixed cap that clients
 # paginate against using `cursor` / `next_cursor`.
 _LIST_SESSIONS_PAGE_SIZE = 50
+
+
+async def _run_blocking_in_daemon_thread(func: Any, *args: Any) -> Any:
+    """Run a blocking callable without touching the loop default executor."""
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+
+    def _set_result(result: Any) -> None:
+        if not future.cancelled():
+            future.set_result(result)
+
+    def _set_exception(exc: BaseException) -> None:
+        if not future.cancelled():
+            future.set_exception(exc)
+
+    def _runner() -> None:
+        try:
+            result = func(*args)
+        except BaseException as exc:  # pragma: no cover - re-raised on loop
+            loop.call_soon_threadsafe(_set_exception, exc)
+        else:
+            loop.call_soon_threadsafe(_set_result, result)
+
+    thread = threading.Thread(
+        target=_runner,
+        name="acp-mcp-registration",
+        daemon=True,
+    )
+    thread.start()
+    while not future.done():
+        await asyncio.sleep(0.05)
+    return future.result()
 
 
 def _extract_text(
@@ -276,7 +305,7 @@ class HermesACPAgent(acp.Agent):
                     }
                 config_map[name] = config
 
-            await asyncio.to_thread(register_mcp_servers, config_map)
+            await _run_blocking_in_daemon_thread(register_mcp_servers, config_map)
         except Exception:
             logger.warning(
                 "Session %s: failed to register ACP MCP servers",
@@ -631,12 +660,12 @@ class HermesACPAgent(acp.Agent):
                         logger.debug("Could not clear ACP session context", exc_info=True)
 
         try:
-            # Wrap the executor call in a fresh copy of the current context so
-            # concurrent ACP sessions on the shared ThreadPoolExecutor don't
+            # Wrap the blocking call in a fresh copy of the current context so
+            # concurrent ACP sessions in separate worker threads don't
             # stomp on each other's ContextVar writes (HERMES_SESSION_KEY in
             # particular — used by the interactive sudo password cache scope).
             ctx = contextvars.copy_context()
-            result = await loop.run_in_executor(_executor, ctx.run, _run_agent)
+            result = await _run_blocking_in_daemon_thread(ctx.run, _run_agent)
         except Exception:
             logger.exception("Executor error for session %s", session_id)
             return PromptResponse(stop_reason="end_turn")

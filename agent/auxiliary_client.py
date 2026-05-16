@@ -63,6 +63,35 @@ if TYPE_CHECKING:
 _OPENAI_CLS_CACHE: Optional[type] = None
 
 
+async def _run_blocking_in_daemon_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run sync auxiliary work without using asyncio's default executor."""
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+
+    def _set_result(result: Any) -> None:
+        if not future.cancelled():
+            future.set_result(result)
+
+    def _set_exception(exc: BaseException) -> None:
+        if not future.cancelled():
+            future.set_exception(exc)
+
+    def _runner() -> None:
+        try:
+            result = func(*args, **kwargs)
+        except BaseException as exc:  # pragma: no cover - re-raised on loop
+            loop.call_soon_threadsafe(_set_exception, exc)
+        else:
+            loop.call_soon_threadsafe(_set_result, result)
+
+    threading.Thread(target=_runner, name="auxiliary-client", daemon=True).start()
+    while not future.done():
+        await asyncio.sleep(0.05)
+    return future.result()
+
+
 def _load_openai_cls() -> type:
     """Import and cache ``openai.OpenAI``."""
     global _OPENAI_CLS_CACHE
@@ -637,7 +666,7 @@ class CodexAuxiliaryClient:
 class _AsyncCodexCompletionsAdapter:
     """Async version of the Codex Responses adapter.
 
-    Wraps the sync adapter via asyncio.to_thread() so async consumers
+    Wraps the sync adapter in a daemon worker thread so async consumers
     (web_tools, session_search) can await it as normal.
     """
 
@@ -645,8 +674,7 @@ class _AsyncCodexCompletionsAdapter:
         self._sync = sync_adapter
 
     async def create(self, **kwargs) -> Any:
-        import asyncio
-        return await asyncio.to_thread(self._sync.create, **kwargs)
+        return await _run_blocking_in_daemon_thread(self._sync.create, **kwargs)
 
 
 class _AsyncCodexChatShim:
@@ -773,8 +801,7 @@ class _AsyncAnthropicCompletionsAdapter:
         self._sync = sync_adapter
 
     async def create(self, **kwargs) -> Any:
-        import asyncio
-        return await asyncio.to_thread(self._sync.create, **kwargs)
+        return await _run_blocking_in_daemon_thread(self._sync.create, **kwargs)
 
 
 class _AsyncAnthropicChatShim:

@@ -20,6 +20,7 @@ import asyncio
 import base64
 import json
 import logging
+import threading
 import time
 import uuid
 from types import SimpleNamespace
@@ -32,6 +33,34 @@ from agent.gemini_schema import sanitize_gemini_tool_parameters
 logger = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+
+async def _run_blocking_in_daemon_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run sync Gemini client work without using asyncio's default executor."""
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+
+    def _set_result(result: Any) -> None:
+        if not future.cancelled():
+            future.set_result(result)
+
+    def _set_exception(exc: BaseException) -> None:
+        if not future.cancelled():
+            future.set_exception(exc)
+
+    def _runner() -> None:
+        try:
+            result = func(*args, **kwargs)
+        except BaseException as exc:  # pragma: no cover - re-raised on loop
+            loop.call_soon_threadsafe(_set_exception, exc)
+        else:
+            loop.call_soon_threadsafe(_set_result, result)
+
+    thread = threading.Thread(target=_runner, name="gemini-native-async", daemon=True)
+    thread.start()
+    while not future.done():
+        await asyncio.sleep(0.05)
+    return future.result()
 
 
 def is_native_gemini_base_url(base_url: str) -> bool:
@@ -934,13 +963,19 @@ class AsyncGeminiNativeClient:
 
     async def _create_chat_completion(self, **kwargs: Any) -> Any:
         stream = bool(kwargs.get("stream"))
-        result = await asyncio.to_thread(self._sync.chat.completions.create, **kwargs)
+        result = await _run_blocking_in_daemon_thread(
+            self._sync.chat.completions.create,
+            **kwargs,
+        )
         if not stream:
             return result
 
         async def _async_stream() -> Any:
             while True:
-                done, chunk = await asyncio.to_thread(self._sync._advance_stream_iterator, result)
+                done, chunk = await _run_blocking_in_daemon_thread(
+                    self._sync._advance_stream_iterator,
+                    result,
+                )
                 if done:
                     break
                 yield chunk
@@ -948,4 +983,4 @@ class AsyncGeminiNativeClient:
         return _async_stream()
 
     async def close(self) -> None:
-        await asyncio.to_thread(self._sync.close)
+        await _run_blocking_in_daemon_thread(self._sync.close)

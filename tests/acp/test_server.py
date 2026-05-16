@@ -743,12 +743,12 @@ class TestSlashCommands:
         mock_conn.request_permission = AsyncMock(return_value=None)
         agent._conn = mock_conn
 
-        # Mock run_in_executor to avoid actually running the agent
-        with patch("asyncio.get_running_loop") as mock_loop:
-            mock_loop.return_value.run_in_executor = AsyncMock(return_value={
+        # Mock the blocking worker bridge to avoid actually running the agent
+        with patch("acp_adapter.server._run_blocking_in_daemon_thread", new_callable=AsyncMock) as mock_worker:
+            mock_worker.return_value = {
                 "final_response": "I processed /foo",
                 "messages": [],
-            })
+            }
             prompt = [TextContentBlock(type="text", text="/foo bar")]
             resp = await agent.prompt(prompt=prompt, session_id=new_resp.session_id)
 
