@@ -171,6 +171,54 @@ def _allow_small_context_model(base_url: str | None) -> bool:
     return bool(base_url and is_local_endpoint(base_url))
 
 
+def _local_model_known_without_tools(model: str | None, base_url: str | None) -> bool:
+    """Return True for local OpenAI-compatible models known to reject tools."""
+    if not (base_url and is_local_endpoint(base_url)):
+        return False
+    normalized = (model or "").strip().lower()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[-1]
+    return normalized.startswith("gemma2")
+
+
+def _api_error_indicates_tools_unsupported(error: Exception) -> bool:
+    """Detect OpenAI-compatible provider errors for unsupported tool schemas."""
+    parts = [str(error)]
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        message = body.get("message") or body.get("error")
+        if message:
+            parts.append(str(message))
+    response = getattr(error, "response", None)
+    response_text = getattr(response, "text", None) if response is not None else None
+    if response_text:
+        parts.append(str(response_text))
+    text = "\n".join(parts).lower()
+    return (
+        "does not support tools" in text
+        or "does not support tool use" in text
+        or "support tool calling" in text
+    )
+
+
+def _should_retry_local_request_without_tools(
+    error: Exception,
+    *,
+    status_code: int | None,
+    api_kwargs: dict | None,
+    base_url: str | None,
+) -> bool:
+    """Return True when a local OpenAI-compatible endpoint rejected tool schemas."""
+    return bool(
+        status_code == 400
+        and isinstance(api_kwargs, dict)
+        and api_kwargs.get("tools")
+        and base_url
+        and is_local_endpoint(base_url)
+        and _api_error_indicates_tools_unsupported(error)
+    )
+
+
 class _SafeWriter:
     """Transparent stdio wrapper that catches OSError/ValueError from broken pipes.
 
@@ -1553,6 +1601,9 @@ class AIAgent:
         # Show trajectory saving status
         if self.save_trajectories and not self.quiet_mode:
             print("📝 Trajectory saving enabled")
+
+        self._disable_tools_for_runtime = False
+        self._warned_tools_disabled_for_model = False
         
         # Show ephemeral system prompt status
         if self.ephemeral_system_prompt and not self.quiet_mode:
@@ -4751,18 +4802,24 @@ class AIAgent:
         # Pointer to the hermes-agent skill + docs for user questions about Hermes itself.
         prompt_parts.append(HERMES_AGENT_HELP_GUIDANCE)
 
+        effective_tool_names = set(self.valid_tool_names or set())
+        if getattr(self, "_disable_tools_for_runtime", False) or _local_model_known_without_tools(
+            self.model, self.base_url
+        ):
+            effective_tool_names = set()
+
         # Tool-aware behavioral guidance: only inject when the tools are loaded
         tool_guidance = []
-        if "memory" in self.valid_tool_names:
+        if "memory" in effective_tool_names:
             tool_guidance.append(MEMORY_GUIDANCE)
-        if "session_search" in self.valid_tool_names:
+        if "session_search" in effective_tool_names:
             tool_guidance.append(SESSION_SEARCH_GUIDANCE)
-        if "skill_manage" in self.valid_tool_names:
+        if "skill_manage" in effective_tool_names:
             tool_guidance.append(SKILLS_GUIDANCE)
         if tool_guidance:
             prompt_parts.append(" ".join(tool_guidance))
 
-        nous_subscription_prompt = build_nous_subscription_prompt(self.valid_tool_names)
+        nous_subscription_prompt = build_nous_subscription_prompt(effective_tool_names)
         if nous_subscription_prompt:
             prompt_parts.append(nous_subscription_prompt)
         # Tool-use enforcement: tells the model to actually call tools instead
@@ -4772,7 +4829,7 @@ class AIAgent:
         #   true  — always inject (all models)
         #   false — never inject
         #   list  — custom model-name substrings to match
-        if self.valid_tool_names:
+        if effective_tool_names:
             _enforce = self._tool_use_enforcement
             _inject = False
             if _enforce is True or (isinstance(_enforce, str) and _enforce.lower() in ("true", "always", "yes", "on")):
@@ -4825,17 +4882,17 @@ class AIAgent:
             except Exception:
                 pass
 
-        has_skills_tools = any(name in self.valid_tool_names for name in ['skills_list', 'skill_view', 'skill_manage'])
+        has_skills_tools = any(name in effective_tool_names for name in ['skills_list', 'skill_view', 'skill_manage'])
         if has_skills_tools:
             avail_toolsets = {
                 toolset
                 for toolset in (
-                    get_toolset_for_tool(tool_name) for tool_name in self.valid_tool_names
+                    get_toolset_for_tool(tool_name) for tool_name in effective_tool_names
                 )
                 if toolset
             }
             skills_prompt = build_skills_system_prompt(
-                available_tools=self.valid_tool_names,
+                available_tools=effective_tool_names,
                 available_toolsets=avail_toolsets,
             )
         else:
@@ -5242,6 +5299,18 @@ class AIAgent:
         self._cached_system_prompt = None
         if self._memory_store:
             self._memory_store.load_from_disk()
+
+    def _rebuild_cached_system_prompt(self, system_message: str = None) -> str:
+        """Rebuild and persist the cached system prompt for runtime mode changes."""
+        self._cached_system_prompt = self._build_system_prompt(system_message)
+        if self._session_db and self.session_id:
+            try:
+                self._session_db.update_system_prompt(
+                    self.session_id, self._cached_system_prompt
+                )
+            except Exception as exc:
+                logger.debug("Session DB update_system_prompt failed: %s", exc)
+        return self._cached_system_prompt
 
     @staticmethod
     def _deterministic_call_id(fn_name: str, arguments: str, index: int = 0) -> str:
@@ -7413,6 +7482,8 @@ class AIAgent:
             self.provider = fb_provider
             self.base_url = fb_base_url
             self.api_mode = fb_api_mode
+            self._disable_tools_for_runtime = False
+            self._warned_tools_disabled_for_model = False
             if hasattr(self, "_transport_cache"):
                 self._transport_cache.clear()
             self._fallback_activated = True
@@ -7536,6 +7607,8 @@ class AIAgent:
             self.provider = rt["provider"]
             self.base_url = rt["base_url"]           # setter updates _base_url_lower
             self.api_mode = rt["api_mode"]
+            self._disable_tools_for_runtime = False
+            self._warned_tools_disabled_for_model = False
             if hasattr(self, "_transport_cache"):
                 self._transport_cache.clear()
             self.api_key = rt["api_key"]
@@ -8110,8 +8183,34 @@ class AIAgent:
                     content[-1]["cache_control"] = {"type": "ephemeral"}
                 break
 
+    def _tools_for_api_request(self):
+        """Return tools for this request, or None when the active model cannot use them."""
+        if not self.tools:
+            return self.tools
+        if getattr(self, "_disable_tools_for_runtime", False) or _local_model_known_without_tools(
+            self.model, self.base_url
+        ):
+            if not getattr(self, "_warned_tools_disabled_for_model", False):
+                self._warned_tools_disabled_for_model = True
+                message = (
+                    "Local model does not support tool calling; running this "
+                    "turn in basic chat mode without tools."
+                )
+                logger.warning(
+                    "%s %s model=%s base_url=%s",
+                    message,
+                    self._client_log_context(),
+                    self.model,
+                    self.base_url,
+                )
+                if not self.quiet_mode:
+                    self._safe_print(f"⚠️  {message}")
+            return None
+        return self.tools
+
     def _build_api_kwargs(self, api_messages: list) -> dict:
         """Build the keyword arguments dict for the active API mode."""
+        request_tools = self._tools_for_api_request()
         if self.api_mode == "anthropic_messages":
             _transport = self._get_transport()
             anthropic_messages = self._prepare_anthropic_messages_for_api(api_messages)
@@ -8123,7 +8222,7 @@ class AIAgent:
             return _transport.build_kwargs(
                 model=self.model,
                 messages=anthropic_messages,
-                tools=self.tools,
+                tools=request_tools,
                 max_tokens=ephemeral_out if ephemeral_out is not None else self.max_tokens,
                 reasoning_config=self.reasoning_config,
                 is_oauth=self._is_anthropic_oauth,
@@ -8142,7 +8241,7 @@ class AIAgent:
             return _bt.build_kwargs(
                 model=self.model,
                 messages=api_messages,
-                tools=self.tools,
+                tools=request_tools,
                 max_tokens=self.max_tokens or 4096,
                 region=region,
                 guardrail_config=guardrail,
@@ -8166,7 +8265,7 @@ class AIAgent:
             return _ct.build_kwargs(
                 model=self.model,
                 messages=_msgs_for_codex,
-                tools=self.tools,
+                tools=request_tools,
                 reasoning_config=self.reasoning_config,
                 session_id=getattr(self, "session_id", None),
                 max_tokens=self.max_tokens,
@@ -8252,7 +8351,7 @@ class AIAgent:
         return _ct.build_kwargs(
             model=self.model,
             messages=_msgs_for_chat,
-            tools=self.tools,
+            tools=request_tools,
             timeout=self._resolved_api_call_timeout(),
             max_tokens=self.max_tokens,
             ephemeral_max_output_tokens=_ephemeral_out,
@@ -10236,6 +10335,7 @@ class AIAgent:
                         logger.debug("Session DB update_system_prompt failed: %s", e)
 
         active_system_prompt = self._cached_system_prompt
+        request_tools_for_estimate = self._tools_for_api_request()
 
         # ── Preflight context compression ──
         # Before entering the main loop, check if the loaded conversation
@@ -10254,7 +10354,7 @@ class AIAgent:
             _preflight_tokens = estimate_request_tokens_rough(
                 messages,
                 system_prompt=active_system_prompt or "",
-                tools=self.tools or None,
+                tools=request_tools_for_estimate or None,
             )
 
             if _preflight_tokens >= self.context_compressor.threshold_tokens:
@@ -10300,7 +10400,7 @@ class AIAgent:
                     _preflight_tokens = estimate_request_tokens_rough(
                         messages,
                         system_prompt=active_system_prompt or "",
-                        tools=self.tools or None,
+                        tools=request_tools_for_estimate or None,
                     )
                     if _preflight_tokens < self.context_compressor.threshold_tokens:
                         break  # Under threshold
@@ -10658,6 +10758,7 @@ class AIAgent:
             # Calculate approximate request size for logging
             total_chars = sum(len(str(msg)) for msg in api_messages)
             approx_tokens = estimate_messages_tokens_rough(api_messages)
+            request_tool_count = len(self._tools_for_api_request() or [])
             
             # Thinking spinner for quiet mode (animated during API call)
             thinking_spinner = None
@@ -10665,7 +10766,7 @@ class AIAgent:
             if not self.quiet_mode:
                 self._vprint(f"\n{self.log_prefix}🔄 Making API call #{api_call_count}/{self.max_iterations}...")
                 self._vprint(f"{self.log_prefix}   📊 Request size: {len(api_messages)} messages, ~{approx_tokens:,} tokens (~{total_chars:,} chars)")
-                self._vprint(f"{self.log_prefix}   🔧 Available tools: {len(self.tools) if self.tools else 0}")
+                self._vprint(f"{self.log_prefix}   🔧 Available tools: {request_tool_count}")
             else:
                 # Animated thinking spinner in quiet mode
                 face = random.choice(KawaiiSpinner.get_thinking_faces())
@@ -10683,7 +10784,7 @@ class AIAgent:
             
             # Log request details if verbose
             if self.verbose_logging:
-                logging.debug(f"API Request - Model: {self.model}, Messages: {len(messages)}, Tools: {len(self.tools) if self.tools else 0}")
+                logging.debug(f"API Request - Model: {self.model}, Messages: {len(messages)}, Tools: {request_tool_count}")
                 logging.debug(f"Last message role: {messages[-1]['role'] if messages else 'none'}")
                 logging.debug(f"Total message size: ~{approx_tokens:,} tokens")
             
@@ -10700,6 +10801,7 @@ class AIAgent:
             image_shrink_retry_attempted = False
             has_retried_429 = False
             restart_with_compressed_messages = False
+            restart_with_rebuilt_prompt = False
             restart_with_length_continuation = False
 
             finish_reason = "stop"
@@ -10775,7 +10877,7 @@ class AIAgent:
                             api_mode=self.api_mode,
                             api_call_count=api_call_count,
                             message_count=len(api_messages),
-                            tool_count=len(self.tools or []),
+                            tool_count=request_tool_count,
                             approx_input_tokens=approx_tokens,
                             request_char_count=total_chars,
                             max_tokens=self.max_tokens,
@@ -11616,6 +11718,31 @@ class AIAgent:
                         classified.should_rotate_credential, classified.should_fallback,
                     )
 
+                    if (
+                        _should_retry_local_request_without_tools(
+                            api_error,
+                            status_code=status_code,
+                            api_kwargs=api_kwargs,
+                            base_url=getattr(self, "base_url", None),
+                        )
+                        and not getattr(self, "_disable_tools_for_runtime", False)
+                    ):
+                        self._disable_tools_for_runtime = True
+                        self._warned_tools_disabled_for_model = True
+                        active_system_prompt = self._rebuild_cached_system_prompt(
+                            system_message
+                        )
+                        self._emit_status(
+                            "⚠️ Local model rejected tool schemas — retrying without tools "
+                            "(basic chat mode)."
+                        )
+                        logger.warning(
+                            "Local endpoint rejected tools; retrying without tool schemas. %s",
+                            self._client_log_context(),
+                        )
+                        restart_with_rebuilt_prompt = True
+                        break
+
                     recovered_with_pool, has_retried_429 = self._recover_with_credential_pool(
                         status_code=status_code,
                         has_retried_429=has_retried_429,
@@ -12424,6 +12551,12 @@ class AIAgent:
             if interrupted:
                 _turn_exit_reason = "interrupted_during_api_call"
                 break
+
+            if restart_with_rebuilt_prompt:
+                api_call_count -= 1
+                self.iteration_budget.refund()
+                restart_with_rebuilt_prompt = False
+                continue
 
             if restart_with_compressed_messages:
                 api_call_count -= 1

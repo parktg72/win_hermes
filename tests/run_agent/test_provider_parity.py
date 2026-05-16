@@ -13,12 +13,18 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 from agent.codex_responses_adapter import _chat_content_to_responses_parts, _chat_messages_to_responses_input, _normalize_codex_response, _preflight_codex_input_items
+from agent.prompt_builder import TOOL_USE_ENFORCEMENT_GUIDANCE
 
 sys.modules.setdefault("fire", types.SimpleNamespace(Fire=lambda *a, **k: None))
 sys.modules.setdefault("firecrawl", types.SimpleNamespace(Firecrawl=object))
 sys.modules.setdefault("fal_client", types.SimpleNamespace())
 
-from run_agent import AIAgent
+from run_agent import (
+    AIAgent,
+    _api_error_indicates_tools_unsupported,
+    _local_model_known_without_tools,
+    _should_retry_local_request_without_tools,
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -160,6 +166,131 @@ class TestBuildApiKwargsOpenRouter:
         anthropic_agent = _make_agent(monkeypatch, "openrouter")
         anthropic_agent.api_mode = "anthropic_messages"
         assert anthropic_agent._should_sanitize_tool_calls() is True
+
+
+class TestLocalOllamaToollessModels:
+    def test_gemma2_local_ollama_omits_tools(self, monkeypatch):
+        agent = _make_agent(
+            monkeypatch,
+            "custom",
+            base_url="http://127.0.0.1:11434/v1",
+            model="gemma2-16k:latest",
+        )
+
+        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
+
+        assert "tools" not in kwargs
+
+    def test_other_local_models_keep_tools(self, monkeypatch):
+        agent = _make_agent(
+            monkeypatch,
+            "custom",
+            base_url="http://127.0.0.1:11434/v1",
+            model="qwen3:8b",
+        )
+
+        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
+
+        assert "tools" in kwargs
+
+    def test_runtime_tool_disable_omits_tools(self, monkeypatch):
+        agent = _make_agent(
+            monkeypatch,
+            "custom",
+            base_url="http://127.0.0.1:11434/v1",
+            model="unknown-local:latest",
+        )
+        agent._disable_tools_for_runtime = True
+
+        kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
+
+        assert "tools" not in kwargs
+
+    def test_runtime_tool_disable_rebuilds_toolless_system_prompt(self, monkeypatch):
+        agent = _make_agent(
+            monkeypatch,
+            "custom",
+            base_url="http://127.0.0.1:11434/v1",
+            model="unknown-local:latest",
+        )
+        agent._tool_use_enforcement = True
+        assert TOOL_USE_ENFORCEMENT_GUIDANCE in agent._build_system_prompt()
+
+        agent._disable_tools_for_runtime = True
+        rebuilt = agent._rebuild_cached_system_prompt()
+
+        assert TOOL_USE_ENFORCEMENT_GUIDANCE not in rebuilt
+        assert agent._cached_system_prompt == rebuilt
+
+    def test_gemma2_system_prompt_omits_tool_enforcement(self, monkeypatch):
+        agent = _make_agent(
+            monkeypatch,
+            "custom",
+            base_url="http://127.0.0.1:11434/v1",
+            model="gemma2-16k:latest",
+        )
+        agent._tool_use_enforcement = True
+
+        prompt = agent._build_system_prompt()
+
+        assert TOOL_USE_ENFORCEMENT_GUIDANCE not in prompt
+
+    def test_known_toolless_model_detection_is_local_only(self):
+        assert _local_model_known_without_tools(
+            "gemma2-16k:latest", "http://127.0.0.1:11434/v1"
+        )
+        assert not _local_model_known_without_tools(
+            "gemma2-16k:latest", "https://openrouter.ai/api/v1"
+        )
+
+    def test_tool_rejection_error_retries_without_tools_for_local_endpoint(self):
+        error = Exception("registry.ollama.ai/library/gemma2-16k:latest does not support tools")
+
+        assert _api_error_indicates_tools_unsupported(error)
+        assert _should_retry_local_request_without_tools(
+            error,
+            status_code=400,
+            api_kwargs={"tools": [{"type": "function"}]},
+            base_url="http://127.0.0.1:11434/v1",
+        )
+        assert not _should_retry_local_request_without_tools(
+            error,
+            status_code=400,
+            api_kwargs={"tools": [{"type": "function"}]},
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+    def test_fallback_resets_runtime_tool_disable(self, monkeypatch):
+        agent = _make_agent(
+            monkeypatch,
+            "custom",
+            base_url="http://127.0.0.1:11434/v1",
+            model="unknown-local:latest",
+        )
+        agent._disable_tools_for_runtime = True
+        agent._warned_tools_disabled_for_model = True
+        agent._fallback_chain = [
+            {
+                "provider": "openrouter",
+                "model": "openai/gpt-4o",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": "fallback-key",
+            }
+        ]
+        agent._fallback_index = 0
+
+        class _FallbackClient:
+            api_key = "fallback-key"
+            base_url = "https://openrouter.ai/api/v1"
+
+        monkeypatch.setattr(
+            "agent.auxiliary_client.resolve_provider_client",
+            lambda *args, **kwargs: (_FallbackClient(), "openai/gpt-4o"),
+        )
+
+        assert agent._try_activate_fallback() is True
+        assert agent._disable_tools_for_runtime is False
+        assert agent._warned_tools_disabled_for_model is False
 
 
 class TestDeveloperRoleSwap:
