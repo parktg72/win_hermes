@@ -1045,7 +1045,7 @@ class TestEventBridgePollE2E:
         """Write a new message to the DB after first poll, verify it's detected."""
         import mcp_serve
         sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
+        sessions_dir.mkdir(exist_ok=True)
         monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: sessions_dir)
 
         session_id = "20260329_150000_new_msg"
