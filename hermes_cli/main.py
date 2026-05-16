@@ -1204,11 +1204,8 @@ def _maybe_setup_ollama_model() -> None:
         base_url = f"{resolve_ollama_base_url(_OLLAMA_DEFAULT_BASE)}/v1"
 
         models = asyncio.run(fetch_ollama_models())
-        # Pass base_url so select_model filters out models below the
-        # 64K minimum context length that run_agent.py:1975 requires
-        # (otherwise users hit "Failed to initialize agent: ... below
-        # the minimum 64,000 required" after picking gemma2 / phi-3 /
-        # mistral-7b-base).
+        # Pass base_url so select_model can show context sizes and warn
+        # about small local models before continuing in degraded mode.
         chosen = select_model(models, saved=saved_model, base_url=base_url)
 
         # save_config_value() in cli.py picks user vs. project config based
@@ -1294,47 +1291,13 @@ def _maybe_setup_ollama_model() -> None:
 
 
 def _is_stale_ollama_pin(model_cfg: dict) -> bool:
-    """Return True iff ``model_cfg`` pins a sub-64K Ollama model that
-    will trip ``run_agent.py`` 's ``MINIMUM_CONTEXT_LENGTH`` guard.
+    """Legacy stale-pin hook.
 
-    This catches the migration case where an older win_hermes build
-    (pre-Phase-1, before the picker had a 64K filter) wrote
-    ``gemma2:latest`` / ``phi-3`` / ``mistral:7b`` to ``config.yaml``.
-    The user can't easily recover from this on their own — the AIAgent
-    fails at init time, and Phase-2's "respect existing provider" skip
-    keeps the picker from re-running.
-
-    Detection is conservative — only when ALL of the following hold:
-      - ``model.provider == "custom"``
-      - ``model.base_url`` points at localhost / 127.0.0.1 (= Ollama)
-      - ``model.context_length`` is NOT explicitly set (an explicit
-        override means the user knowingly accepted a small model)
-      - ``model.default`` resolves to <64K via Ollama's /api/show
+    Small local Ollama models are now allowed in degraded mode, so a
+    pre-existing gemma2/phi pin should no longer force the picker to rerun.
+    Keep the function for call-site/test compatibility.
     """
-    provider = (model_cfg.get("provider") or "").strip().lower()
-    if provider != "custom":
-        return False
-    base_url = (model_cfg.get("base_url") or "").strip()
-    if not any(host in base_url for host in ("127.0.0.1", "localhost", "[::1]")):
-        return False
-    if model_cfg.get("context_length"):
-        # User explicitly overrode — respect their choice.
-        return False
-    model_name = (model_cfg.get("default") or model_cfg.get("model") or "").strip()
-    if not model_name:
-        return False
-    try:
-        from agent.model_metadata import (
-            MINIMUM_CONTEXT_LENGTH,
-            query_ollama_num_ctx,
-        )
-
-        ctx = query_ollama_num_ctx(model_name, base_url)
-    except Exception:  # noqa: BLE001 — server down / parse error
-        return False
-    if ctx is None:
-        return False
-    return ctx < MINIMUM_CONTEXT_LENGTH
+    return False
 
 
 def _maybe_setup_default_backend() -> None:
@@ -1346,10 +1309,8 @@ def _maybe_setup_default_backend() -> None:
     Skips silently when:
       - ``HERMES_MODEL`` env is set (explicit user override)
       - ``~/.hermes/config.yaml`` already has a non-empty ``model.provider``
-        (the user has been here before and made a choice) — UNLESS that
-        pin is a sub-64K Ollama model written by a pre-Phase-1 build,
-        which would crash the AIAgent at init.  In that one case we
-        warn (Korean) and re-run the picker.
+        (the user has been here before and made a choice).  Small local
+        Ollama pins are respected and handled later in degraded mode.
     """
     if os.environ.get("HERMES_MODEL"):
         return
@@ -1407,8 +1368,8 @@ def _maybe_setup_default_backend() -> None:
             "  2) OpenAI          — 환경변수 OPENAI_API_KEY 설정\n"
             "  3) Codex (ChatGPT) — `codex login` 실행 후 다시 시도\n"
             "  4) Gemini          — 환경변수 GEMINI_API_KEY 설정\n"
-            "  5) Ollama (로컬)    — `ollama serve` 실행 + 64K+ 모델 pull\n"
-            "                       (예: `ollama pull gemma3:12b`)\n",
+            "  5) Ollama (로컬)    — `ollama serve` 실행 + 모델 pull\n"
+            "                       (예: `ollama pull gemma2` 또는 `ollama pull gemma3:12b`)\n",
             file=sys.stderr,
         )
         sys.exit(1)

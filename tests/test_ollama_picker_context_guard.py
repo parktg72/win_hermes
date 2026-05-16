@@ -8,11 +8,12 @@ The picker had no idea about context length, so users would happily pick a
 small-context model and only see the error after install completes and the
 first chat starts.  These tests pin the new behavior:
 
-  1. Models below MINIMUM_CONTEXT_LENGTH are rejected interactively.
+  1. Models below MINIMUM_CONTEXT_LENGTH are clearly marked but still usable
+     for closed-network fallback.
   2. When a saved model is now incompatible (e.g. user pulled a smaller
      replacement), the picker doesn't auto-return it.
-  3. When *every* installed model is below the minimum, the picker raises
-     a Korean-language error with concrete ``ollama pull <name>`` commands.
+  3. When *every* installed model is below the minimum, the picker warns
+     in Korean and auto-picks the first model in non-interactive mode.
   4. Unknown context (transient ``/api/show`` failure) is treated as
      compatible-by-faith — never block the user on a hiccup.
   5. Legacy ``select_model`` calls without ``base_url`` skip filtering
@@ -21,8 +22,6 @@ first chat starts.  These tests pin the new behavior:
 from __future__ import annotations
 
 from unittest.mock import patch
-
-import pytest
 
 from agent.model_metadata import MINIMUM_CONTEXT_LENGTH
 from hermes_cli.providers.ollama_discovery import select_model
@@ -85,37 +84,26 @@ def test_saved_model_dropped_when_below_minimum(capsys):
     assert "64K" in out or "64,000" in out
 
 
-def test_no_compatible_models_raises_with_korean_pull_guide():
-    """Every installed model below 64K → ValueError with Korean copy that
-    names a ≥64K model the user can pull.  This is the message non-developer
-    Korean medical researchers see if they only have gemma2 / phi-3."""
+def test_no_compatible_models_warns_and_uses_first_installed_model(capsys):
+    """Every installed model below 64K → warn, but do not block startup.
+    Closed-network Windows users may only have gemma2 available."""
     with patch(
         "agent.model_metadata.query_ollama_num_ctx",
         side_effect=_ctx_map(
             {"gemma2:latest": _LOW_CTX, "phi3:latest": 4_096}
         ),
     ):
-        with pytest.raises(ValueError) as exc_info:
-            select_model(
-                ["gemma2:latest", "phi3:latest"],
-                saved=None,
-                base_url=_BASE,
-                auto_pick_first=True,
-            )
+        chosen = select_model(
+            ["gemma2:latest", "phi3:latest"],
+            saved=None,
+            base_url=_BASE,
+            auto_pick_first=True,
+        )
 
-    msg = str(exc_info.value)
-    # The message must (a) be Korean, (b) name at least one ≥64K model
-    # the user can pull right now, (c) include the actual `ollama pull`
-    # command they should run.
-    assert "Hermes Agent" in msg
-    assert "64,000" in msg
+    assert chosen == "gemma2:latest"
+    msg = capsys.readouterr().err
+    assert "작은 컨텍스트" in msg
     assert "ollama pull" in msg
-    # At least one of the recommended top-tier 128K models must appear
-    recommended = ("gemma3:12b", "llama3.1:8b", "qwen3:8b")
-    assert any(rec in msg for rec in recommended), (
-        f"no recommended model in error: {msg!r}"
-    )
-    # And it must list which installed models failed and why
     assert "gemma2:latest" in msg
     assert "8,192" in msg
 
@@ -176,9 +164,9 @@ def test_user_recovers_from_stale_gemma2_in_config_json(tmp_path, monkeypatch):
     3. User runs ``hermes`` again expecting it to "just work."
 
     After ``_maybe_setup_ollama_model()`` returns:
-      - ``config.yaml model.default`` is the compatible model (llama3.1:8b)
-      - ``config.json ollama_model`` is also updated to the compatible model
-        (so a future run doesn't re-stick on gemma2)
+      - ``config.yaml model.default`` is upgraded to the compatible model
+        when one is installed
+      - ``config.json ollama_model`` is also updated to the selected model
       - ``OPENAI_BASE_URL`` env points at localhost
     """
     import json
@@ -236,7 +224,7 @@ def test_user_recovers_from_stale_gemma2_in_config_json(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_cli_mod, "_hermes_home", hermes_home, raising=False)
 
-    # Force non-interactive picker (auto_pick first compatible)
+    # Force non-interactive picker (auto-pick first compatible when available)
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
     from hermes_cli import main as main_mod
@@ -246,18 +234,13 @@ def test_user_recovers_from_stale_gemma2_in_config_json(tmp_path, monkeypatch):
     # ─── assertions ───
     # 1. config.yaml has the compatible model selected
     cfg_yaml = yaml.safe_load((hermes_home / "config.yaml").read_text())
-    assert cfg_yaml["model"]["default"] == "llama3.1:8b", (
-        f"config.yaml didn't switch off stale gemma2: {cfg_yaml!r}"
-    )
+    assert cfg_yaml["model"]["default"] == "llama3.1:8b"
     assert cfg_yaml["model"]["provider"] == "custom"
     assert "127.0.0.1:11434" in cfg_yaml["model"]["base_url"]
 
-    # 2. Legacy config.json ollama_model also updated — otherwise next run
-    #    re-reads stale gemma2 as 'saved' and the loop reproduces.
+    # 2. Legacy config.json ollama_model also reflects the selected model.
     legacy = json.loads(legacy_json.read_text())
-    assert legacy["ollama_model"] == "llama3.1:8b", (
-        f"config.json still pinned to stale gemma2: {legacy!r}"
-    )
+    assert legacy["ollama_model"] == "llama3.1:8b"
 
     # 3. Env var matches config.yaml (so the SDK doesn't pick a different URL)
     import os

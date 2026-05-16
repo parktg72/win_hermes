@@ -91,7 +91,7 @@ def test_uses_saved_model_when_still_available(monkeypatch, tmp_path):
     assert os.environ.get("HERMES_MODEL") == "ollama/mistral:7b"
 
 
-def test_exits_with_specific_korean_stderr_when_models_below_context_minimum(
+def test_warns_and_continues_when_models_below_context_minimum(
     monkeypatch, tmp_path, capsys
 ):
     monkeypatch.delenv("HERMES_MODEL", raising=False)
@@ -107,14 +107,13 @@ def test_exits_with_specific_korean_stderr_when_models_below_context_minimum(
         "hermes_cli.providers.ollama_discovery.fetch_ollama_models",
         new=mock_fetch,
     ), patch("agent.model_metadata.query_ollama_num_ctx", side_effect=_ctx):
-        with pytest.raises(SystemExit) as excinfo:
-            _maybe_setup_ollama_model()
-        assert excinfo.value.code == 1
+        _maybe_setup_ollama_model()
 
     captured = capsys.readouterr()
+    assert os.environ.get("HERMES_MODEL") == "ollama/gemma2:latest"
     assert "gemma2:latest" in captured.err
     assert "8,192" in captured.err
-    assert "64,000" in captured.err
+    assert "작은 컨텍스트" in captured.err
     assert "ollama pull" in captured.err
 
 

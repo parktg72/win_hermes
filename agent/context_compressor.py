@@ -30,6 +30,7 @@ from agent.model_metadata import (
     MINIMUM_CONTEXT_LENGTH,
     get_model_context_length,
     estimate_messages_tokens_rough,
+    is_local_endpoint,
 )
 from agent.redact import redact_sensitive_text
 
@@ -72,6 +73,23 @@ _IMAGE_TOKEN_ESTIMATE = 1600
 # for tail-cut decisions.
 _IMAGE_CHAR_EQUIVALENT = _IMAGE_TOKEN_ESTIMATE * _CHARS_PER_TOKEN
 _SUMMARY_FAILURE_COOLDOWN_SECONDS = 600
+
+
+def _threshold_tokens_for_context(
+    context_length: int,
+    threshold_percent: float,
+    base_url: str = "",
+) -> int:
+    """Return compression threshold tokens for a model context window.
+
+    Remote/provider models keep the 64K floor.  Local small-context endpoints
+    such as Ollama on a closed-network Windows PC must compress inside their
+    actual window instead of waiting for an impossible 64K threshold.
+    """
+    percent_threshold = max(1, int(context_length * threshold_percent))
+    if context_length < MINIMUM_CONTEXT_LENGTH and base_url and is_local_endpoint(base_url):
+        return percent_threshold
+    return max(percent_threshold, MINIMUM_CONTEXT_LENGTH)
 
 
 def _content_length_for_budget(raw_content: Any) -> int:
@@ -361,9 +379,10 @@ class ContextCompressor(ContextEngine):
         self.provider = provider
         self.api_mode = api_mode
         self.context_length = context_length
-        self.threshold_tokens = max(
-            int(context_length * self.threshold_percent),
-            MINIMUM_CONTEXT_LENGTH,
+        self.threshold_tokens = _threshold_tokens_for_context(
+            context_length,
+            self.threshold_percent,
+            base_url,
         )
         # Recalculate token budgets for the new context length so the
         # compressor stays calibrated after a model switch (e.g. 200K → 32K).
@@ -404,13 +423,13 @@ class ContextCompressor(ContextEngine):
             config_context_length=config_context_length,
             provider=provider,
         )
-        # Floor: never compress below MINIMUM_CONTEXT_LENGTH tokens even if
-        # the percentage would suggest a lower value.  This prevents premature
-        # compression on large-context models at 50% while keeping the % sane
-        # for models right at the minimum.
-        self.threshold_tokens = max(
-            int(self.context_length * threshold_percent),
-            MINIMUM_CONTEXT_LENGTH,
+        # Floor: never compress below MINIMUM_CONTEXT_LENGTH for normal
+        # providers.  Local small-context endpoints (closed-network Ollama)
+        # use the percentage threshold so compression happens before overflow.
+        self.threshold_tokens = _threshold_tokens_for_context(
+            self.context_length,
+            threshold_percent,
+            base_url,
         )
         self.compression_count = 0
 

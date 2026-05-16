@@ -131,6 +131,26 @@ def _no_compatible_models_error(
     return "\n".join(lines)
 
 
+def _small_context_warning(
+    contexts: dict[str, Optional[int]], minimum: int
+) -> str:
+    """Korean warning when only small Ollama models are installed."""
+    lines = [
+        "⚠ 작은 컨텍스트 Ollama 모델만 감지되었습니다.",
+        f"Hermes 권장 컨텍스트는 {minimum:,} 토큰 이상이지만,",
+        "폐쇄망 환경을 위해 현재 설치된 모델로 계속 진행합니다:",
+    ]
+    for name, ctx in contexts.items():
+        ctx_str = f"{ctx:,}" if ctx else "?"
+        lines.append(f"  - {name} (컨텍스트 {ctx_str} 토큰)")
+    lines.append("")
+    lines.append("긴 작업에서 컨텍스트 부족이 나면 다음 모델을 추가로 받으세요:")
+    lines.append("  ollama pull gemma3:12b")
+    lines.append("  ollama pull llama3.1:8b")
+    lines.append("  ollama pull qwen3:8b")
+    return "\n".join(lines)
+
+
 def select_model(
     models: list[str],
     saved: Optional[str],
@@ -145,17 +165,17 @@ def select_model(
         saved: Last-used model name from config (may be None or stale).
         auto_pick_first: If True, skip interactive prompt (for tests).
         base_url: When provided, query each model's num_ctx and reject
-            those below ``MINIMUM_CONTEXT_LENGTH`` (64K) so the user
-            never picks a model that hermes will refuse at init time.
+            those below ``MINIMUM_CONTEXT_LENGTH`` (64K).  If every model
+            is below the threshold, warn and allow the first installed model
+            so closed-network users are not blocked.
             When ``None``, fall back to legacy behavior (no filtering)
             so existing unit tests keep passing without rewiring.
 
     Returns:
-        Selected model name (guaranteed compatible when ``base_url`` is set).
+        Selected model name.
 
     Raises:
-        ValueError: If models list is empty, or every model is below the
-            minimum context length (with Korean guidance and pull commands).
+        ValueError: If models list is empty.
     """
     if not models:
         raise ValueError("No models found in Ollama. Run `ollama pull <model>` first.")
@@ -194,7 +214,15 @@ def select_model(
     compatible = [m for m in models if _is_compat(m)]
 
     if not compatible:
-        raise ValueError(_no_compatible_models_error(contexts, MINIMUM_CONTEXT_LENGTH))
+        print(
+            _small_context_warning(contexts, MINIMUM_CONTEXT_LENGTH),
+            file=sys.stderr,
+        )
+        if saved and saved in models:
+            return saved
+        if auto_pick_first or not sys.stdin.isatty():
+            return models[0]
+        compatible = list(models)
 
     # Saved model still valid?
     if saved and saved in compatible:
@@ -211,10 +239,7 @@ def select_model(
     if auto_pick_first or not sys.stdin.isatty():
         return compatible[0]
 
-    print(
-        f"\nOllama 모델을 선택하세요 "
-        f"({MINIMUM_CONTEXT_LENGTH // 1000}K+ 컨텍스트 모델만 선택 가능):"
-    )
+    print(f"\nOllama 모델을 선택하세요:")
     for i, name in enumerate(models, 1):
         print(_format_picker_line(i, name, contexts.get(name), MINIMUM_CONTEXT_LENGTH))
 
@@ -224,7 +249,7 @@ def select_model(
             idx = int(choice) - 1
             if 0 <= idx < len(models):
                 chosen = models[idx]
-                if _is_compat(chosen):
+                if _is_compat(chosen) or not any(_is_compat(m) for m in models):
                     return chosen
                 ctx = contexts.get(chosen)
                 ctx_str = f"{ctx:,}" if ctx else "?"

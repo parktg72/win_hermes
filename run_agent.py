@@ -162,6 +162,14 @@ from agent.trajectory import (
 from utils import atomic_json_write, base_url_host_matches, base_url_hostname, env_var_enabled, normalize_proxy_url
 
 
+def _allow_small_context_model(base_url: str | None) -> bool:
+    """Allow small context windows only for local endpoints.
+
+    Remote/provider models keep the 64K floor.  Local Ollama users in
+    closed networks can still run small models such as gemma2.
+    """
+    return bool(base_url and is_local_endpoint(base_url))
+
 
 class _SafeWriter:
     """Transparent stdio wrapper that catches OSError/ValueError from broken pipes.
@@ -1973,13 +1981,24 @@ class AIAgent:
         from agent.model_metadata import MINIMUM_CONTEXT_LENGTH
         _ctx = getattr(self.context_compressor, "context_length", 0)
         if _ctx and _ctx < MINIMUM_CONTEXT_LENGTH:
-            raise ValueError(
-                f"Model {self.model} has a context window of {_ctx:,} tokens, "
-                f"which is below the minimum {MINIMUM_CONTEXT_LENGTH:,} required "
-                f"by Hermes Agent.  Choose a model with at least "
-                f"{MINIMUM_CONTEXT_LENGTH // 1000}K context, or set "
-                f"model.context_length in config.yaml to override."
-            )
+            if _allow_small_context_model(self.base_url):
+                msg = (
+                    f"⚠ Local model {self.model} has a small context window "
+                    f"({_ctx:,} tokens). Hermes will run in degraded "
+                    f"small-context mode; long tool-heavy tasks may need a "
+                    f"{MINIMUM_CONTEXT_LENGTH // 1000}K+ model."
+                )
+                logger.warning(msg)
+                if not self.quiet_mode:
+                    print(msg)
+            else:
+                raise ValueError(
+                    f"Model {self.model} has a context window of {_ctx:,} tokens, "
+                    f"which is below the minimum {MINIMUM_CONTEXT_LENGTH:,} required "
+                    f"by Hermes Agent.  Choose a model with at least "
+                    f"{MINIMUM_CONTEXT_LENGTH // 1000}K context, or set "
+                    f"model.context_length in config.yaml to override."
+                )
 
         # Inject context engine tool schemas (e.g. lcm_grep, lcm_describe, lcm_expand)
         self._context_engine_tool_names: set = set()

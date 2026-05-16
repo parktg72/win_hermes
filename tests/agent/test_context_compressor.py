@@ -970,6 +970,17 @@ class TestSummaryTargetRatio:
         # 50% of 100K = 50K, but the floor is 64K
         assert c.threshold_tokens == 64_000
 
+    def test_local_small_context_threshold_stays_inside_window(self):
+        """Local Ollama degraded mode must compress before the small window overflows."""
+        with patch("agent.context_compressor.get_model_context_length", return_value=4_096):
+            c = ContextCompressor(
+                model="gemma2:latest",
+                quiet_mode=True,
+                base_url="http://127.0.0.1:11434/v1",
+                provider="custom",
+            )
+        assert c.threshold_tokens == 2_048
+
     def test_threshold_floor_does_not_apply_above_128k(self):
         """On large-context models the 50% percentage is used directly."""
         with patch("agent.context_compressor.get_model_context_length", return_value=200_000):

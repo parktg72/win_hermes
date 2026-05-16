@@ -22,13 +22,13 @@ Detection priority (= picker display order):
     4. Google Gemini      — GEMINI_API_KEY / GOOGLE_API_KEY env or
                             ~/.gemini/oauth_creds.json
     5. Ollama (local)     — localhost:11434 reachable AND ≥1 model
-                            with ≥64K context
 
 Each detection function is best-effort and silently returns None on
 any failure (no exceptions propagate to the picker).  Phase-1 invariants
 hold: Ollama path still routes through ``provider="custom"``, env-driven
 overrides still win, and the 64K context guard from
-``test_ollama_picker_context_guard.py`` is reused for the Ollama probe.
+``test_ollama_picker_context_guard.py`` is reused for the Ollama probe,
+but small-context local Ollama models are still offered in degraded mode.
 """
 from __future__ import annotations
 
@@ -157,11 +157,11 @@ def _detect_gemini() -> Optional[BackendOption]:
 
 
 def _detect_ollama() -> Optional[BackendOption]:
-    """Probe localhost Ollama AND require ≥1 model with ≥64K context.
+    """Probe localhost Ollama and return it when at least one model exists.
 
-    Reuses Phase-1 helpers so an installed-but-context-short setup
-    (gemma2 / phi-3 only) is treated as "no Ollama backend available"
-    rather than offering a path that would crash at AIAgent init.
+    Closed-network Windows users may only have a small model such as
+    gemma2:latest available.  Treat that as an available backend and let
+    the model picker/runtime run in small-context degraded mode.
     """
     import asyncio
 
@@ -214,7 +214,12 @@ def _detect_ollama() -> Optional[BackendOption]:
             break
 
     if not has_compatible:
-        return None
+        return BackendOption(
+            id="custom",
+            label=f"Ollama (로컬, {len(models)}개 모델)",
+            detail=f"{base} 응답, 작은 컨텍스트 모델만 감지됨",
+            base_url=base_v1,
+        )
 
     return BackendOption(
         id="custom",
