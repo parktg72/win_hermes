@@ -1881,9 +1881,14 @@ def _(rid, params: dict) -> dict:
     try:
         db.reopen_session(target)
         history = db.get_messages_as_conversation(target)
-        display_history = db.get_messages_as_conversation(
-            target, include_ancestors=True
-        )
+        try:
+            display_history = db.get_messages_as_conversation(
+                target, include_ancestors=True
+            )
+        except TypeError as exc:
+            if "include_ancestors" not in str(exc):
+                raise
+            display_history = db.get_messages_as_conversation(target)
         messages = _history_to_messages(display_history)
         tokens = _set_session_context(target)
         try:

@@ -877,13 +877,13 @@ def _maybe_wrap_anthropic(
         return client_obj
     try:
         from agent.gemini_native_adapter import GeminiNativeClient
-        if isinstance(client_obj, GeminiNativeClient):
+        if isinstance(GeminiNativeClient, type) and isinstance(client_obj, GeminiNativeClient):
             return client_obj
     except ImportError:
         pass
     try:
         from agent.copilot_acp_client import CopilotACPClient
-        if isinstance(client_obj, CopilotACPClient):
+        if isinstance(CopilotACPClient, type) and isinstance(client_obj, CopilotACPClient):
             return client_obj
     except ImportError:
         pass

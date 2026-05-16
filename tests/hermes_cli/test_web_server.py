@@ -2,6 +2,7 @@
 
 import os
 import json
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -1845,20 +1846,28 @@ class TestPtyWebSocket:
             assert b"round-trip-payload" in buf
 
     def test_resize_escape_is_forwarded(self, monkeypatch):
-        # Resize escape gets intercepted and applied via TIOCSWINSZ,
-        # then ``tput cols/lines`` reports the new dimensions back.
+        query_size = (
+            "import fcntl, struct, sys, termios; "
+            "sys.stdin.buffer.readline(); "
+            "rows, cols, _, _ = struct.unpack('HHHH', "
+            "fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, "
+            "struct.pack('HHHH', 0, 0, 0, 0))); "
+            "print(cols); print(rows)"
+        )
+        # Resize escape gets intercepted and applied via TIOCSWINSZ, then the
+        # child reports the ioctl-backed dimensions.
         monkeypatch.setattr(
             self.ws_module,
             "_resolve_chat_argv",
-            # sleep gives the test time to push the resize before tput runs
             lambda resume=None, sidecar_url=None: (
-                ["/bin/sh", "-c", "sleep 0.15; tput cols; tput lines"],
+                [sys.executable, "-c", query_size],
                 None,
                 None,
             ),
         )
         with self.client.websocket_connect(self._url()) as conn:
             conn.send_text("\x1b[RESIZE:99;41]")
+            conn.send_text("\n")
             buf = b""
             import time
 

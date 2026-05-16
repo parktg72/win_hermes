@@ -96,15 +96,25 @@ class TestPtyBridgeIO:
 @skip_on_windows
 class TestPtyBridgeResize:
     def test_resize_updates_child_winsize(self):
-        # tput reads COLUMNS/LINES from the TTY ioctl (TIOCGWINSZ).
-        # Spawn a shell, resize, then ask tput for the dimensions.
+        query_size = (
+            "import fcntl, struct, sys, termios; "
+            "sys.stdin.buffer.readline(); "
+            "rows, cols, _, _ = struct.unpack('HHHH', "
+            "fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, "
+            "struct.pack('HHHH', 0, 0, 0, 0))); "
+            "print(cols); print(rows)"
+        )
+        # Query the TTY ioctl (TIOCGWINSZ) directly. Shell helpers such as
+        # tput can report stale COLUMNS/LINES values in non-interactive shells.
+        # Gate the measurement on stdin so resize is definitely applied first.
         bridge = PtyBridge.spawn(
-            ["/bin/sh", "-c", "sleep 0.1; tput cols; tput lines"],
+            [sys.executable, "-c", query_size],
             cols=80,
             rows=24,
         )
         try:
             bridge.resize(cols=123, rows=45)
+            bridge.write(b"\n")
             output = _read_until(bridge, b"45", timeout=5.0)
             # tput prints just the numbers, one per line
             assert b"123" in output

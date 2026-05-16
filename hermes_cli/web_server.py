@@ -338,6 +338,8 @@ _CATEGORY_MERGE: Dict[str, str] = {
     "human_delay": "display",
     "dashboard": "display",
     "code_execution": "agent",
+    "prompt_caching": "compression",
+    "telegram": "auxiliary",
 }
 
 # Display order for tabs — unlisted categories sort alphabetically after these.

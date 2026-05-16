@@ -2276,8 +2276,10 @@ def test_session_create_close_race_does_not_orphan_worker(monkeypatch):
 
     # Make _build block until we release it — simulates slow agent init
     release_build = threading.Event()
+    entered_build = threading.Event()
 
     def _slow_make_agent(sid, key):
+        entered_build.set()
         release_build.wait(timeout=3.0)
         return _FakeAgent()
 
@@ -2315,6 +2317,8 @@ def test_session_create_close_race_does_not_orphan_worker(monkeypatch):
     )
     assert resp.get("result"), f"got error: {resp.get('error')}"
     sid = resp["result"]["session_id"]
+    server._start_agent_build(sid, server._sessions[sid])
+    assert entered_build.wait(timeout=1.0)
 
     # Build thread is blocked in _slow_make_agent.  Close the session
     # NOW — this pops _sessions[sid] before _build can install the

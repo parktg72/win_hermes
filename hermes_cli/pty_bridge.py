@@ -184,12 +184,17 @@ class PtyBridge:
         """Forward a terminal resize to the child via ``TIOCSWINSZ``."""
         if self._closed:
             return
-        # struct winsize: rows, cols, xpixel, ypixel (all unsigned short)
-        winsize = struct.pack("HHHH", max(1, rows), max(1, cols), 0, 0)
+        rows = max(1, rows)
+        cols = max(1, cols)
         try:
-            fcntl.ioctl(self._fd, termios.TIOCSWINSZ, winsize)
+            self._proc.setwinsize(rows, cols)
         except OSError:
-            pass
+            try:
+                # struct winsize: rows, cols, xpixel, ypixel (all unsigned short)
+                winsize = struct.pack("HHHH", rows, cols, 0, 0)
+                fcntl.ioctl(self._fd, termios.TIOCSWINSZ, winsize)
+            except OSError:
+                pass
 
     # -- teardown ---------------------------------------------------------
 

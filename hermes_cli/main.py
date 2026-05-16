@@ -5602,7 +5602,7 @@ def _warn_stale_dashboard_processes() -> None:
             if result.returncode != 0:
                 return
             current_cmd = ""
-            for line in result.stdout.split("\n"):
+            for line in (getattr(result, "stdout", "") or "").split("\n"):
                 line = line.strip()
                 if line.startswith("CommandLine="):
                     current_cmd = line[len("CommandLine="):]
@@ -5626,7 +5626,7 @@ def _warn_stale_dashboard_processes() -> None:
                 capture_output=True, text=True, timeout=10,
             )
             if result.returncode == 0:
-                for line in result.stdout.split("\n"):
+                for line in (getattr(result, "stdout", "") or "").split("\n"):
                     stripped = line.strip()
                     if not stripped or "grep" in stripped:
                         continue
