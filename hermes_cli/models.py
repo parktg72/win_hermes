@@ -373,6 +373,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "glm-4.6",
         "kimi-k2-thinking",
         "kimi-k2",
+        "qwen3.6-plus",
         "qwen3-coder",
         "big-pickle",
     ],

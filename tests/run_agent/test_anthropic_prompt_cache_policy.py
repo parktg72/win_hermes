@@ -217,6 +217,15 @@ class TestQwenAlibabaFamily:
         )
         assert agent._anthropic_prompt_cache_policy() == (True, False)
 
+    def test_qwen36_plus_on_opencode_zen_caches(self):
+        agent = _make_agent(
+            provider="opencode-zen",
+            base_url="https://opencode.ai/zen/v1",
+            api_mode="chat_completions",
+            model="qwen3.6-plus",
+        )
+        assert agent._anthropic_prompt_cache_policy() == (True, False)
+
     def test_qwen_on_direct_alibaba_caches(self):
         agent = _make_agent(
             provider="alibaba",
@@ -329,4 +338,3 @@ class TestExplicitOverrides:
 # ─────────────────────────────────────────────────────────────────────
 # Long-lived prefix cache policy (cross-session 1h tier)
 # ─────────────────────────────────────────────────────────────────────
-
