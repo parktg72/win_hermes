@@ -70,8 +70,12 @@ mini-swe-agent/
 result
 website/static/api/skills-index.json
 models-dev-upstream/
+hermes_cli/tui_dist/*
+hermes_cli/scripts/
+docs/superpowers/*
 
-# Offline Windows wheel cache
+# Windows offline bundle cache. Keep vendor/uv.exe tracked, but do not track
+# the generated wheel cache or checksum sidecar by default.
 vendor/wheels/
 vendor/uv.exe.sha256
 

@@ -96,25 +96,22 @@ class TestPtyBridgeIO:
 @skip_on_windows
 class TestPtyBridgeResize:
     def test_resize_updates_child_winsize(self):
-        query_size = (
-            "import fcntl, struct, sys, termios; "
-            "sys.stdin.buffer.readline(); "
-            "rows, cols, _, _ = struct.unpack('HHHH', "
-            "fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, "
-            "struct.pack('HHHH', 0, 0, 0, 0))); "
+        # Query the TTY ioctl directly instead of using tput, which requires
+        # TERM and fails in GitHub Actions' non-interactive environment.
+        winsize_script = (
+            "import fcntl, struct, termios, time; "
+            "time.sleep(0.1); "
+            "rows, cols, *_ = struct.unpack('HHHH', "
+            "fcntl.ioctl(0, termios.TIOCGWINSZ, b'\\0' * 8)); "
             "print(cols); print(rows)"
         )
-        # Query the TTY ioctl (TIOCGWINSZ) directly. Shell helpers such as
-        # tput can report stale COLUMNS/LINES values in non-interactive shells.
-        # Gate the measurement on stdin so resize is definitely applied first.
         bridge = PtyBridge.spawn(
-            [sys.executable, "-c", query_size],
+            [sys.executable, "-c", winsize_script],
             cols=80,
             rows=24,
         )
         try:
             bridge.resize(cols=123, rows=45)
-            bridge.write(b"\n")
             output = _read_until(bridge, b"45", timeout=5.0)
             # tput prints just the numbers, one per line
             assert b"123" in output
